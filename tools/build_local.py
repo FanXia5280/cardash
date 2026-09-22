@@ -188,6 +188,8 @@ def main():
         cmd.append(sys.argv[3])
         if len(sys.argv) > 4 and sys.argv[4].strip():
             cmd.append(sys.argv[4])
+    if '--no-shared-uid' in sys.argv:
+        cmd.append('--no-shared-uid')
     ok, _ = run('改写清单并注入 dex', cmd, tail=None)
     if FAILED:
         return

@@ -200,7 +200,8 @@ public final class BridgeRuntime {
         StringBuilder sb = new StringBuilder(768);
 
         sb.append("运行时长: ").append((System.currentTimeMillis() - startedAt) / 1000).append(" 秒\n");
-        sb.append("监听地址: ").append(statusLine()).append("\n\n");
+        sb.append("监听地址: ").append(statusLine()).append("\n");
+        sb.append("日志目录: ").append(Diagnostics.dir()).append("\n\n");
 
         sb.append("网络接口:\n");
         List<Net.Iface> ifaces = Net.interfaces();

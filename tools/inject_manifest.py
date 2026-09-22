@@ -24,6 +24,7 @@ RID_VERSION_CODE = 0x0101021b
 RID_VERSION_NAME = 0x0101021c
 RID_NAME = 0x01010003
 RID_RESOURCE = 0x01010025
+RID_SHARED_USER_ID = 0x0101000b
 
 FGS_DATA_SYNC = 1  # FOREGROUND_SERVICE_TYPE_DATA_SYNC
 
@@ -31,6 +32,15 @@ A11Y_SERVICE = 'com.cardash.inject.NaviAccessibilityService'
 A11Y_PERMISSION = 'android.permission.BIND_ACCESSIBILITY_SERVICE'
 A11Y_ACTION = 'android.accessibilityservice.AccessibilityService'
 A11Y_METADATA = 'android.accessibilityservice'
+
+# 这两个权限在 Android 11（车机）上不存在，声明了也只是被忽略；
+# 但到了 Android 13+ 就是必需的，补上顺带让模拟器能完整验证。
+#   POST_NOTIFICATIONS            —— API 33+ 发通知必须申请
+#   FOREGROUND_SERVICE_DATA_SYNC  —— API 34+ 起 dataSync 类型前台服务必须申请
+EXTRA_PERMISSIONS = [
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
+]
 
 
 def die(msg):
@@ -65,6 +75,16 @@ def find_a11y_config_res(doc):
         if name_val == A11Y_METADATA and res_val:
             return res_val
     return None
+
+
+def build_permissions(doc, ns):
+    """补声明权限，插在 <application> 之前。"""
+    toks = []
+    for perm in EXTRA_PERMISSIONS:
+        toks.append(Token('start', name=doc.add_string('uses-permission'),
+                          attrs=[axml.make_string_attr(doc, 'name', perm, ns)]))
+        toks.append(Token('end', name=doc.add_string('uses-permission')))
+    return toks
 
 
 def build_components(doc, ns, a11y_res):
@@ -151,7 +171,7 @@ def build_components(doc, ns, a11y_res):
 
 # ─────────────────────────────────────────── 改写清单
 
-def patch_manifest(data, version_code=None, version_name=None):
+def patch_manifest(data, version_code=None, version_name=None, drop_shared_uid=False):
     doc = axml.parse(data)
 
     ns = doc.index_of(NS_ANDROID)
@@ -192,24 +212,38 @@ def patch_manifest(data, version_code=None, version_name=None):
             a.dtype = axml.TYPE_STRING
             a.data = name_idx
 
-    if 'com.cardash.inject.BootProvider' in ''.join(
-            doc.string(t.name) or '' for t in doc.tokens if t.kind == 'start'):
-        pass  # 组件判重走下面的 attr 检查
-
     for t in doc.tokens:
         if t.kind == 'start':
             for a in t.attrs:
                 if a.raw != NO_INDEX and doc.string(a.raw) == 'com.cardash.inject.BootProvider':
                     die('清单里已经存在桥接组件，请用未打补丁的原始 APK')
 
-    ai, ae = axml.find_element(doc, 'application')
-    if ae is None:
-        die('找不到 </application>')
+    # 仅用于在模拟器上测试：Android 14+ 禁止非预装应用加入 android.uid.system，
+    # 去掉这个属性才能在模拟器上装进去验证运行时行为。车机（Android 11）不需要。
+    if drop_shared_uid:
+        before = len(manifest_tok.attrs)
+        manifest_tok.attrs = [a for a in manifest_tok.attrs
+                              if doc.res_id(a.name) != RID_SHARED_USER_ID]
+        if len(manifest_tok.attrs) == before:
+            print('注意：清单里本来就没有 sharedUserId')
+        else:
+            print('已移除 sharedUserId（仅用于模拟器测试，勿用于车机）')
 
     a11y_res = find_a11y_config_res(doc)
     if a11y_res is None:
         die('D.apk 里找不到 android.accessibilityservice 的配置资源，无法注入无障碍服务')
     print('复用无障碍配置资源 ID = 0x%08x' % a11y_res)
+
+    ai, ae = axml.find_element(doc, 'application')
+    if ae is None:
+        die('找不到 </application>')
+
+    # 补权限要插在 <application> 之前，插入后 </application> 的位置要相应后移
+    perms = build_permissions(doc, ns)
+    if perms:
+        doc.tokens[ai:ai] = perms
+        ae += len(perms)
+        print('补声明权限 %d 条' % (len(EXTRA_PERMISSIONS)))
 
     doc.tokens[ae:ae] = build_components(doc, ns, a11y_res)
 
@@ -229,7 +263,8 @@ def patch_manifest(data, version_code=None, version_name=None):
 STORED = {'AndroidManifest.xml', 'resources.arsc'}
 
 
-def build_apk(src, dex_path, out, version_code, version_name, quiet=False):
+def build_apk(src, dex_path, out, version_code, version_name, quiet=False,
+              drop_shared_uid=False):
     if not os.path.isfile(src):
         die('找不到源 APK: ' + src)
 
@@ -242,7 +277,7 @@ def build_apk(src, dex_path, out, version_code, version_name, quiet=False):
             die('源 APK 已存在 classes2.dex，请用原始包')
 
         new_manifest, info = patch_manifest(zin.read('AndroidManifest.xml'),
-                                            version_code, version_name)
+                                            version_code, version_name, drop_shared_uid)
 
         dex = None
         if dex_path and dex_path != '-':
@@ -335,10 +370,17 @@ def main():
     if len(sys.argv) < 4:
         die('用法: inject_manifest.py <src.apk> <classes2.dex|-> <out.apk> [code] [name]')
 
-    src, dex, out = sys.argv[1], sys.argv[2], sys.argv[3]
-    code = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4].strip() else None
-    name = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5].strip() else None
-    build_apk(src, dex, out, code, name)
+    flags = {a for a in sys.argv[1:] if a.startswith('--')}
+    pos = [a for a in sys.argv[1:] if not a.startswith('--')]
+    if len(pos) < 3:
+        die('用法: inject_manifest.py <src.apk> <classes2.dex|-> <out.apk> '
+            '[version_code] [version_name] [--no-shared-uid]')
+
+    src, dex, out = pos[0], pos[1], pos[2]
+    code = pos[3] if len(pos) > 3 and pos[3].strip() else None
+    name = pos[4] if len(pos) > 4 and pos[4].strip() else None
+    build_apk(src, dex, out, code, name,
+              drop_shared_uid='--no-shared-uid' in flags)
 
 
 if __name__ == '__main__':
