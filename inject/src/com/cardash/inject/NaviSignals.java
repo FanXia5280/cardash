@@ -16,6 +16,13 @@ import java.util.regex.Pattern;
 public final class NaviSignals {
 
     private static final String[] NAV_PACKAGES = {
+            // ↓ 深蓝这台车实测用的就是腾讯梧桐导航（从 D.apk 里挖出来的包名）
+            "com.tinnove.wecarnavi",
+            "com.tinnove.wecarspeech",
+            "com.tinnove.mediacenter",
+            "com.tinnove.renderserver",
+            "com.tinnove.navi",
+            // ↓ 其它常见车机导航
             "com.autonavi.amapauto",
             "com.autonavi.amap",
             "com.autonavi.auto",
@@ -58,7 +65,8 @@ public final class NaviSignals {
             if (p.equals(pkg)) return true;
         }
         String lower = pkg.toLowerCase();
-        return lower.contains("navi") || lower.contains("amap") || lower.contains("baidumap");
+        return lower.contains("navi") || lower.contains("amap") || lower.contains("baidumap")
+                || lower.contains("tinnove");
     }
 
     // ─────────────────────────────────────── 来源一：通知栏
@@ -105,6 +113,40 @@ public final class NaviSignals {
         hub.navActive = true;
         hub.navUpdatedAt = System.currentTimeMillis();
         hub.navSource = "notify:" + pkg;
+    }
+
+    // ─────────────────────────────────────── 无障碍包名统计
+
+    private static final java.util.Map<String, Integer> A11Y_PKGS =
+            new java.util.concurrent.ConcurrentHashMap<String, Integer>();
+
+    /** 记录无障碍事件来自哪个包 —— 用来找出车机导航的真实包名，而不是靠猜。 */
+    public static void noteA11yPackage(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return;
+        Integer c = A11Y_PKGS.get(pkg);
+        A11Y_PKGS.put(pkg, c == null ? 1 : c + 1);
+    }
+
+    public static String a11yPackageSummary() {
+        java.util.List<java.util.Map.Entry<String, Integer>> list =
+                new java.util.ArrayList<java.util.Map.Entry<String, Integer>>(A11Y_PKGS.entrySet());
+        java.util.Collections.sort(list,
+                new java.util.Comparator<java.util.Map.Entry<String, Integer>>() {
+                    @Override public int compare(java.util.Map.Entry<String, Integer> a,
+                                                 java.util.Map.Entry<String, Integer> b) {
+                        return b.getValue() - a.getValue();
+                    }
+                });
+        if (list.isEmpty()) {
+            return "  （还没收到无障碍事件；若一直为空说明读屏服务没真正连上）\n";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < list.size() && i < 30; i++) {
+            String p = list.get(i).getKey();
+            sb.append("  ").append(p).append("  x").append(list.get(i).getValue())
+              .append(isNavPackage(p) ? "   ← 已在导航白名单里" : "").append('\n');
+        }
+        return sb.toString();
     }
 
     // ─────────────────────────────────────── 导航包名探测

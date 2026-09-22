@@ -96,8 +96,8 @@ public final class BridgeRuntime {
         try {
             server = new HttpServer(PORT, new HttpServer.Handler() {
                 @Override
-                public String handle(String path) {
-                    return route(path);
+                public String handle(String path, String query) {
+                    return route(path, query);
                 }
             });
             server.start();
@@ -267,7 +267,7 @@ public final class BridgeRuntime {
         return d == null ? "--" : String.valueOf(Math.round(d)) + unit;
     }
 
-    private static String route(String path) {
+    private static String route(String path, String query) {
         if ("/".equals(path) || "/index.html".equals(path)) {
             return StatusPage.render();
         }
@@ -280,11 +280,15 @@ public final class BridgeRuntime {
         if ("/logcat".equals(path)) {
             return logcatReport();
         }
-        if (path.startsWith("/scan")) {
+        if ("/scan".equals(path)) {
             VendorSignals v = vendor;
             return v == null
                     ? "厂商通道未启动，先看 /diag 里的 carError"
-                    : v.scanEntry(path.indexOf("all") > 0);
+                    : v.scanEntry(query != null && query.contains("all"));
+        }
+        if ("/setfull".equals(path)) {
+            // 车机不上报 SOC 百分比时，用「剩余续航 / 满电续航」折算，这里设定满电续航
+            return VendorSignals.setFullRange(query);
         }
         if ("/log".equals(path)) {
             return Diagnostics.tail(64 * 1024);
@@ -343,6 +347,23 @@ public final class BridgeRuntime {
         sb.append("  续航   ").append(hub.rangeKm == null ? "--" : String.valueOf(hub.rangeKm)).append('\n');
         sb.append("  总里程 ").append(hub.odometerKm == null ? "--" : String.valueOf(hub.odometerKm)).append('\n');
         sb.append("  封面   ").append(hub.mCover == null ? "无" : (hub.mCover.length() + " 字符")).append('\n');
+
+        sb.append("\n【导航】\n");
+        sb.append("  listener     = ")
+          .append(hub.src.get("listener") == null ? "未连接" : hub.src.get("listener")).append('\n');
+        sb.append("  notify 权限  = ")
+          .append(hub.src.get("notify") == null ? "未知" : hub.src.get("notify")).append('\n');
+        sb.append("  a11y 状态    = ")
+          .append(hub.src.get("a11y") == null ? "未知" : hub.src.get("a11y")).append('\n');
+        sb.append("  收到通知条数 = ").append(hub.navSeen).append('\n');
+        sb.append("  当前导航     = ")
+          .append(hub.navTitle == null ? "--" : hub.navTitle).append('\n');
+
+        sb.append("\n【无障碍事件来源统计（用来找车机导航的真包名）】\n");
+        sb.append(NaviSignals.a11yPackageSummary());
+
+        sb.append("\n【内容像导航但不在白名单的通知】\n");
+        sb.append(NaviSignals.candidateSummary());
 
         return sb.toString();
     }

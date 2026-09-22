@@ -13,8 +13,13 @@ import java.nio.charset.StandardCharsets;
 public final class HttpServer {
 
     public interface Handler {
-        /** 返回响应体；返回 null 表示 404。 */
-        String handle(String path);
+        /**
+         * 返回响应体；返回 null 表示 404。
+         *
+         * @param path  去掉查询串的路径，例如 /scan
+         * @param query 查询串，没有则为空串，例如 all=1&amp;km=500
+         */
+        String handle(String path, String query);
     }
 
     private final int port;
@@ -110,10 +115,14 @@ public final class HttpServer {
 
             String[] parts = requestLine.split(" ");
             String path = parts.length > 1 ? parts[1] : "/";
+            String query = "";
             int q = path.indexOf('?');
-            if (q >= 0) path = path.substring(0, q);
+            if (q >= 0) {
+                query = path.substring(q + 1);
+                path = path.substring(0, q);
+            }
 
-            String body = handler.handle(path);
+            String body = handler.handle(path, query);
             if (body == null) {
                 respond(s, 404, "text/plain; charset=utf-8", "not found");
             } else if ("/health".equals(path)) {

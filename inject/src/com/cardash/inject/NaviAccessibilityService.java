@@ -45,6 +45,10 @@ public class NaviAccessibilityService extends AccessibilityService {
         }
     }
 
+    /** 白名单外包的最短间隔，避免读屏开销过大 */
+    private static final long FOREIGN_INTERVAL_MS = 1500L;
+    private long lastForeignScan;
+
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         try {
@@ -52,7 +56,19 @@ public class NaviAccessibilityService extends AccessibilityService {
             CharSequence pkg = event.getPackageName();
             if (pkg == null) return;
             String p = pkg.toString();
-            if (!NaviSignals.isNavPackage(p)) return;
+
+            // 先记包名 —— 车机导航的真实包名往往和我们猜的不一样，
+            // 统计出来才能补进白名单
+            NaviSignals.noteA11yPackage(p);
+
+            boolean known = NaviSignals.isNavPackage(p);
+            long now = System.currentTimeMillis();
+            if (!known) {
+                // 白名单外的应用也偶尔看一眼：车机导航可能根本不是安卓应用，
+                // 也可能是厂商自研的包名。限流一下，别把读屏拖垮。
+                if (now - lastForeignScan < FOREIGN_INTERVAL_MS) return;
+                lastForeignScan = now;
+            }
 
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) return;

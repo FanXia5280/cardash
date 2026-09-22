@@ -37,20 +37,25 @@ public final class VendorSignals {
     private static final String UTIL = "com.deepalhome.launcher.util.CarS05InfoUtil";
     private static final String CACHE = "com.deepalhome.launcher.carinfo.CacheCarS05Info";
 
-    // ── 我们需要的别名（来自厂商完整别名表 Aliases）──
-    private static final String A_SOC        = "EnergyInfo/SocPercent";
-    private static final String A_SOC_ALT    = "EnergyInfo/BatterySOC";
-    private static final String A_RANGE      = "EnergyInfo/RemainingMileage";
-    private static final String A_RANGE_STD  = "EnergyInfo/RemainingMileageStandard";
-    private static final String A_RANGE_RES  = "EnergyInfo/SocResidualRange";
-    private static final String A_RANGE_LOW  = "EnergyInfo/ResidualRange";
-    private static final String A_SPEED      = "DrivingInfo/Speed";
-    private static final String A_GEAR       = "DrivingInfo/Gear";
-    private static final String A_ODO        = "DrivingInfo/Odometer/Total";
+    // ── 我们需要的别名 ──
+    //
+    // ⚠️ 实测车机**不认** EnergyInfo/SocPercent、DrivingInfo/Gear 这类名字 ——
+    // 那些是厂商属性表里的名字，不是取值用的 key。
+    // D.apk 真正用的是 vc_alias_*（从 CarS05InfoUtil 的 psOnlyAliases /
+    // virtualCarProtectedAliases 静态字段里挖出来的）：
+    // 注意：这 37 个 vc_alias_* 里**没有 SOC 百分比**，只有一个一个的续航
+    // （DTE = Distance To Empty）。所以电量百分比只能按续航折算，见 poll()。
+    private static final String A_RANGE      = "vc_alias_left_ev_dte";    // 剩余电续航
+    private static final String A_RANGE_STD  = "vc_alias_disp_dte";       // 显示续航
+    private static final String A_RANGE_LOW  = "vc_alias_e_dte";          // 电续航
+    private static final String A_SPEED      = "vc_alias_vehicle_speed";
+    private static final String A_GEAR       = "vc_alias_vehicle_gear";
+    private static final String A_ODO        = "vc_alias_journey_all_distance";
+    private static final String A_DRIVE      = "vc_alias_drive_style";
+    private static final String A_TIRE_FL    = "vc_alias_tire_pressure";
 
     private static final String[] PROBE = {
-            A_SOC, A_SOC_ALT, A_RANGE, A_RANGE_STD, A_RANGE_RES, A_RANGE_LOW,
-            A_SPEED, A_GEAR, A_ODO,
+            A_SPEED, A_GEAR, A_ODO, A_RANGE, A_RANGE_STD, A_RANGE_LOW, A_DRIVE,
     };
 
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:\\.\\d+)?");
@@ -59,6 +64,21 @@ public final class VendorSignals {
     private Method psGet;             // psGetValueSync(String)
     private Method startMonitor;      // startMonitor()
     private Field cacheField;         // static CacheCarS05Info cacheCarS05Info
+    private Class<?> utilClass;
+
+    /** CarS05InfoUtil.virtualCarPropertyManager —— 直接按属性 ID 取值 */
+    private Object mgr;
+    private Method getValueMethod;
+
+    // D.apk 的三个私有初始化方法。实测它们不一定成功（虚拟车辆管理器为 null、
+    // 聚合服务 psAvailable=false），而 vc_alias_vehicle_gear 只走聚合服务 ——
+    // 这就是「挂了 D 档但档位不更新」的根因。所以这里主动替它补一遍。
+    private Method bindVcarMgr;       // bindVirtualCarPropertyManager()
+    private Method connectPs;         // connectPolymericService(boolean)
+    private Method registerVcarCb;    // registerVirtualCarCallbacks()
+    private int bindAttempts;
+
+    private android.content.Context appCtx;
     private HandlerThread thread;
     private Handler handler;
     private volatile boolean running;
@@ -69,6 +89,8 @@ public final class VendorSignals {
 
         final Context app = context.getApplicationContext() != null
                 ? context.getApplicationContext() : context;
+        appCtx = app;
+        initPrefs(app);
 
         thread = new HandlerThread("cardash-vendor");
         thread.start();
@@ -76,6 +98,7 @@ public final class VendorSignals {
         handler.post(new Runnable() {
             @Override public void run() {
                 if (connect()) {
+                    ensureBound();
                     startPolling();
                 }
             }
@@ -94,6 +117,7 @@ public final class VendorSignals {
         StateHub hub = StateHub.get();
         try {
             Class<?> c = Class.forName(UTIL);
+            utilClass = c;
             util = c.getDeclaredField("INSTANCE").get(null);
             if (util == null) {
                 hub.setSource("vendor", "CarS05InfoUtil.INSTANCE 为 null");
@@ -111,6 +135,10 @@ public final class VendorSignals {
                 // 已经启动过就会走到这里，不影响
             }
 
+            bindVcarMgr = priv(c, "bindVirtualCarPropertyManager");
+            connectPs = priv(c, "connectPolymericService", boolean.class);
+            registerVcarCb = priv(c, "registerVirtualCarCallbacks");
+
             try {
                 cacheField = c.getDeclaredField("cacheCarS05Info");
                 cacheField.setAccessible(true);
@@ -118,9 +146,23 @@ public final class VendorSignals {
                 cacheField = null;
             }
 
+            // 拿到虚拟车辆属性管理器，才能按属性 ID 直接取值
+            try {
+                Field mf = c.getDeclaredField("virtualCarPropertyManager");
+                mf.setAccessible(true);
+                mgr = mf.get(null);
+                if (mgr != null) {
+                    getValueMethod = mgr.getClass().getMethod("getValue", int.class, int.class);
+                }
+            } catch (Throwable t) {
+                mgr = null;
+                getValueMethod = null;
+            }
+
             Class.forName(CACHE);   // 只是确认类在
 
             hub.setSource("vendor", "connected");
+            hub.setSource("vcarMgr", mgr == null ? "null" : "ok");
             Diagnostics.log("厂商通道已连上: " + UTIL);
             return true;
         } catch (Throwable t) {
@@ -129,6 +171,80 @@ public final class VendorSignals {
             Diagnostics.log("厂商通道不可用: " + t);
             return false;
         }
+    }
+
+    /** 取一个私有方法并放开访问权限 */
+    private static Method priv(Class<?> c, String name, Class<?>... params) {
+        try {
+            Method m = c.getDeclaredMethod(name, params);
+            m.setAccessible(true);
+            return m;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private Object readStatic(String name) {
+        Class<?> c = utilClass;
+        if (c == null) return null;
+        try {
+            Field f = c.getDeclaredField(name);
+            f.setAccessible(true);
+            return f.get(null);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 主动补绑：D.apk 自己的初始化不一定成功。
+     *
+     * 实测 virtualCarPropertyManager=null、psAvailable=false、
+     * virtualCarRegistered=false，而 vc_alias_vehicle_gear 只走聚合服务 ——
+     * 这就是「挂了 D 档但档位不更新」的根因。这里替它补一遍。
+     */
+    private void ensureBound() {
+        if (mgr != null && readStatic("polymericService") != null
+                && Boolean.TRUE.equals(readStatic("virtualCarRegistered"))) {
+            return;
+        }
+        if (bindAttempts++ > 8) return;
+        StateHub hub = StateHub.get();
+
+        try {
+            if (mgr == null && bindVcarMgr != null) {
+                bindVcarMgr.invoke(util);
+                mgr = readStatic("virtualCarPropertyManager");
+                if (mgr != null) {
+                    getValueMethod = mgr.getClass().getMethod("getValue", int.class, int.class);
+                }
+            }
+        } catch (Throwable ignored) {
+            // 拿不到就靠缓存，不影响其它字段
+        }
+
+        try {
+            if (registerVcarCb != null
+                    && !Boolean.TRUE.equals(readStatic("virtualCarRegistered"))) {
+                registerVcarCb.invoke(util);
+            }
+        } catch (Throwable ignored) {
+            // 忽略
+        }
+
+        try {
+            if (connectPs != null && readStatic("polymericService") == null) {
+                connectPs.invoke(util, Boolean.FALSE);
+            }
+        } catch (Throwable ignored) {
+            // 聚合服务连不上就靠缓存兜底
+        }
+
+        hub.setSource("vcarMgr", mgr == null ? "null" : "ok");
+        hub.setSource("ps", readStatic("polymericService") == null ? "off" : "on");
+        Diagnostics.log("主动补绑#" + bindAttempts + ": mgr=" + (mgr != null)
+                + " ps=" + (readStatic("polymericService") != null)
+                + " registered=" + readStatic("virtualCarRegistered"));
     }
 
     private void startPolling() {
@@ -163,9 +279,24 @@ public final class VendorSignals {
         //    档位/车速/总里程/续航都在里面，先把保底数据拿到手。
         readCache(hub);
 
+        // 2) 电量百分比：车机实测不上报 EnergyInfo/SocPercent（psGetValueSync
+        //    对全部 1276 个别名都返回 null），所以按用户要求用剩余续航折算。
+        //    满电续航可在 /setfull?km=500 里改。
+        if (hub.soc == null && hub.rangeKm != null && hub.rangeKm > 0) {
+            double full = fullRangeKm();
+            if (full > 1) {
+                double pct = hub.rangeKm / full * 100.0;
+                hub.soc = Math.max(0, Math.min(100, pct));
+                hub.setSource("soc", "derived:" + Math.round(hub.rangeKm) + "/" + (int) full + "km");
+            }
+        }
+
         if (!probeAliases) return;
 
-        // 2) 再按别名补（主要是拿电量百分比，缓存里没有这个字段）。
+        // 每 2 秒给一次补绑机会（前几次可能拿不到，D.apk 那边是异步的）
+        ensureBound();
+
+        // 3) 再按别名补（有则更准，没有也不影响上面折算出来的值）。
         //    psGetValueSync 是阻塞式 IPC，万一车机那边卡住，也只是这一轮
         //    补不到，上面缓存读到的值仍然有效 —— 顺序不能反。
         int ok = 0;
@@ -188,16 +319,69 @@ public final class VendorSignals {
         }
     }
 
+    // ─────────────────────────────────────── 电量百分比：车机不上报就折算
+
+    private static final String PREF = "cardash";
+    private static final String KEY_FULL = "fullRangeKm";
+    private static final float DEFAULT_FULL = 500f;
+
+    private static volatile android.content.SharedPreferences prefs;
+
+    public static void initPrefs(android.content.Context ctx) {
+        try {
+            prefs = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE);
+        } catch (Throwable ignored) {
+            // 拿不到就用默认值
+        }
+    }
+
+    public static double fullRangeKm() {
+        android.content.SharedPreferences p = prefs;
+        if (p == null) return DEFAULT_FULL;
+        try {
+            return p.getFloat(KEY_FULL, DEFAULT_FULL);
+        } catch (Throwable t) {
+            return DEFAULT_FULL;
+        }
+    }
+
+    /** /setfull?km=520 用；不带参数就只回显当前值。 */
+    public static String setFullRange(String query) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("满电续航（用于把剩余续航折算成电量百分比）\n");
+        sb.append("  当前 = ").append((int) fullRangeKm()).append(" km\n");
+
+        if (query != null) {
+            for (String kv : query.split("&")) {
+                int eq = kv.indexOf('=');
+                if (eq <= 0) continue;
+                if (!"km".equals(kv.substring(0, eq).trim())) continue;
+                try {
+                    float v = Float.parseFloat(kv.substring(eq + 1).trim());
+                    if (v < 50 || v > 1200) {
+                        sb.append("  拒绝：km 要在 50~1200 之间\n");
+                        return sb.toString();
+                    }
+                    android.content.SharedPreferences p = prefs;
+                    if (p != null) {
+                        p.edit().putFloat(KEY_FULL, v).commit();
+                    }
+                    sb.append("  已改为 = ").append((int) v).append(" km\n");
+                    sb.append("  电量百分比 = 剩余续航 / ").append((int) v).append(" * 100\n");
+                    return sb.toString();
+                } catch (Throwable ignored) {
+                    sb.append("  参数不对，用法: /setfull?km=500\n");
+                    return sb.toString();
+                }
+            }
+        }
+        sb.append("\n  改法: ").append(BridgeRuntime.primaryUrl()).append("/setfull?km=500\n");
+        return sb.toString();
+    }
+
     /** @return true 表示这个值真的被用上了 */
     private boolean apply(StateHub hub, String alias, Object raw) {
-        if (A_SOC.equals(alias) || A_SOC_ALT.equals(alias)) {
-            Double d = num(raw);
-            if (d == null) return false;
-            hub.soc = d <= 1.0 ? d * 100.0 : d;
-            hub.setSource("soc", "vendor:" + alias);
-            return true;
-        }
-        if (A_RANGE.equals(alias) || A_RANGE_RES.equals(alias) || A_RANGE_LOW.equals(alias)) {
+        if (A_RANGE.equals(alias) || A_RANGE_LOW.equals(alias)) {
             Double d = num(raw);
             if (d == null || d < 0) return false;
             hub.rangeKm = d;
@@ -212,6 +396,10 @@ public final class VendorSignals {
                 hub.rangeKm = d;
                 hub.setSource("range", "vendor:" + alias + "(std)");
             }
+            return true;
+        }
+        if (A_DRIVE.equals(alias)) {
+            hub.setSource("driveStyle", String.valueOf(raw));
             return true;
         }
         if (A_SPEED.equals(alias)) {
@@ -326,6 +514,8 @@ public final class VendorSignals {
     private volatile int scanDone;
     private volatile int scanTotal;
     private volatile boolean scanRunning;
+    /** 属性 ID 逐个取值的结果。会很慢，所以只有后台线程填，这里只读。 */
+    private volatile String idDumpText = "（还没采到，看下面进度走完再刷新）";
 
     public String scanEntry(boolean includeAll) {
         if (!scanRunning && scanDone == 0) {
@@ -342,12 +532,12 @@ public final class VendorSignals {
 
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
+                // 实测 EnergyInfo/DrivingInfo 两个命名空间全部返回 null，
+                // 所以默认就把 1276 个别名全扫一遍，不给结论留死角。
                 String[] all = Aliases.all();
                 java.util.List<String> todo = new java.util.ArrayList<>(all.length);
                 for (String a : all) {
-                    if (includeAll || a.startsWith("EnergyInfo/") || a.startsWith("DrivingInfo/")) {
-                        todo.add(a);
-                    }
+                    todo.add(a);
                 }
                 scanTotal = todo.size();
 
@@ -374,6 +564,138 @@ public final class VendorSignals {
         t.start();
     }
 
+    /**
+     * 把 CarS05InfoUtil 的所有静态字段倒出来。
+     *
+     * 里面藏着 D.apk 到底注册了哪些虚拟车辆属性 ID（virtualCarSensorIds 等）、
+     * 哪些别名受保护、最近哪些字段变过（pendingChangedFields）。
+     * 「挂了 D 档但档位不更新」的答案大概率就在这里面。
+     */
+    private String staticsDump() {
+        Class<?> c = utilClass;
+        if (c == null) return "  （类未加载）\n";
+        StringBuilder sb = new StringBuilder(4096);
+        for (Field f : c.getDeclaredFields()) {
+            if (!java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+            String n = f.getName();
+            if (n.startsWith("$") || "INSTANCE".equals(n)) continue;
+            sb.append("  ").append(n).append(" = ");
+            try {
+                f.setAccessible(true);
+                sb.append(describe(f.get(null)));
+            } catch (Throwable t) {
+                sb.append('<').append(t.getClass().getSimpleName()).append('>');
+            }
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 逐个读虚拟车辆属性 ID 的当前值。
+     *
+     * 拿到 virtualCarSensorIds 后直接 getValue(id, 0)，就能看到车机真实的原始
+     * 属性值 —— 档位有没有在更新、SOC 到底在哪个 ID 上，一看便知。
+     */
+    private String idDump() {
+        Class<?> c = utilClass;
+        if (c == null) return "  （类未加载）\n";
+        if (mgr == null || getValueMethod == null) {
+            return "  （拿不到 virtualCarPropertyManager，无法按 ID 取值）\n";
+        }
+        StringBuilder sb = new StringBuilder(4096);
+        String[] names = {"virtualCarSensorIds", "virtualCarHvacIds", "virtualCarCabinIds"};
+        for (String n : names) {
+            int[] ids = readIntArray(c, n);
+            if (ids == null) {
+                sb.append("  ").append(n).append(" —— 读不到\n");
+                continue;
+            }
+            sb.append("  ").append(n).append("（").append(ids.length).append(" 个）:\n");
+            for (int id : ids) {
+                sb.append("    0x")
+                  .append(Integer.toHexString(id).toUpperCase(java.util.Locale.US))
+                  .append("  ").append(readId(id)).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static int[] readIntArray(Class<?> c, String name) {
+        try {
+            Field f = c.getDeclaredField(name);
+            f.setAccessible(true);
+            Object v = f.get(null);
+            return v instanceof int[] ? (int[]) v : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private String readId(int id) {
+        try {
+            Object v = getValueMethod.invoke(mgr, id, 0);
+            return v == null ? "null" : String.valueOf(v);
+        } catch (Throwable t) {
+            return "<" + t.getClass().getSimpleName() + ">";
+        }
+    }
+
+    /** 把任意反射出来的对象压成一行可读文本 */
+    private static String describe(Object v) {
+        if (v == null) return "null";
+        if (v instanceof int[]) {
+            int[] a = (int[]) v;
+            StringBuilder b = new StringBuilder("[");
+            for (int i = 0; i < a.length && i < 40; i++) {
+                if (i > 0) b.append(", ");
+                b.append(a[i]);
+            }
+            if (a.length > 40) b.append(", …共").append(a.length);
+            return b.append(']').toString();
+        }
+        if (v instanceof Object[]) {
+            Object[] a = (Object[]) v;
+            StringBuilder b = new StringBuilder("[");
+            for (int i = 0; i < a.length && i < 40; i++) {
+                if (i > 0) b.append(", ");
+                b.append(a[i]);
+            }
+            if (a.length > 40) b.append(", …共").append(a.length);
+            return b.append(']').toString();
+        }
+        if (v instanceof java.util.Map) {
+            java.util.Map<?, ?> m = (java.util.Map<?, ?>) v;
+            StringBuilder b = new StringBuilder("{");
+            int i = 0;
+            for (java.util.Map.Entry<?, ?> e : m.entrySet()) {
+                if (i++ > 0) b.append(", ");
+                if (i > 25) {
+                    b.append("…共").append(m.size()).append(" 项");
+                    break;
+                }
+                b.append(e.getKey()).append('=').append(e.getValue());
+            }
+            return b.append('}').toString();
+        }
+        if (v instanceof java.util.Collection) {
+            java.util.Collection<?> col = (java.util.Collection<?>) v;
+            StringBuilder b = new StringBuilder("[");
+            int i = 0;
+            for (Object o : col) {
+                if (i++ > 0) b.append(", ");
+                if (i > 30) {
+                    b.append("…共").append(col.size()).append(" 项");
+                    break;
+                }
+                b.append(o);
+            }
+            return b.append(']').toString();
+        }
+        String s = String.valueOf(v);
+        return s.length() > 200 ? s.substring(0, 200) + "…" : s;
+    }
+
     private String scanText() {
         StringBuilder sb = new StringBuilder(8192);
         sb.append("厂商属性扫描\n");
@@ -383,8 +705,18 @@ public final class VendorSignals {
         sb.append("  进度          : ").append(scanDone).append('/').append(scanTotal)
           .append(scanRunning ? "（进行中，刷新本页看更多）" : "（已完成）").append('\n');
 
+        sb.append("  满电续航      : ").append((int) fullRangeKm())
+          .append(" km（用于折算电量% ，用 /setfull?km=N 改）\n");
+
         sb.append("\n【CarS05InfoUtil.cacheCarS05Info】\n");
         sb.append(cacheDump());
+
+        // 纯反射，无 IPC，放在同步路径上是安全的
+        sb.append("\n【CarS05InfoUtil 静态字段（含 D.apk 注册了哪些属性）】\n");
+        sb.append(staticsDump());
+
+        sb.append("\n【虚拟车辆属性 ID 逐个取值】\n");
+        sb.append(idDumpText);
 
         if (util == null || psGet == null) {
             sb.append("\n厂商 SDK 没连上，原因见 /diag 的 carError\n");
