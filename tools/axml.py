@@ -225,6 +225,12 @@ def _build_pool(strings):
         blob += raw
         blob += struct.pack('<H', 0)
 
+    # ★ 关键：AXML 要求每个 chunk 的 size 必须 4 字节对齐，
+    #   否则系统解析时报「is not on an integer boundary」直接拒绝安装。
+    #   stringsStart 是 28 + 4*n，本来就是 4 的倍数，所以只要把数据段补齐即可。
+    while len(blob) % 4 != 0:
+        blob += b'\x00'
+
     strings_start = header_size + 4 * len(strings)
     size = strings_start + len(blob)
     out = struct.pack('<HHI', CHUNK_STRING_POOL, header_size, size)
@@ -273,12 +279,46 @@ def _emit_token(t):
 
 
 def emit(doc):
+    # 不重排属性：解析器对顺序没有要求，保持原样才能让往返自检逐字节一致
     body = bytearray()
     body += _build_pool(doc.strings)
     body += _build_resmap(doc.resmap)
     for t in doc.tokens:
         body += _emit_token(t)
-    return _chunk(CHUNK_XML, 8, bytes(body))
+
+    out = _chunk(CHUNK_XML, 8, bytes(body))
+    verify_chunks(out)
+    return out
+
+
+def verify_chunks(data):
+    """自检：所有 chunk 的 size/headerSize 必须 4 字节对齐，否则系统会拒绝安装。
+
+    系统在 ResXMLTree 初始化时就会校验这一点，不通过直接报
+    「is not on an integer boundary」并把包判定为无法解析。
+    """
+    total = _u32(data, 4)
+    if total != len(data):
+        raise AxmlError('XML 头声明的长度 %d 与实际 %d 不符' % (total, len(data)))
+    if _u16(data, 0) != CHUNK_XML:
+        raise AxmlError('根 chunk 类型不是 XML')
+
+    p = 8
+    while p < len(data):
+        ctype = _u16(data, p)
+        hs = _u16(data, p + 2)
+        cs = _u32(data, p + 4)
+        if hs % 4 != 0:
+            raise AxmlError('chunk 0x%04x @%d 的 headerSize %d 未 4 字节对齐'
+                            % (ctype, p, hs))
+        if cs % 4 != 0:
+            raise AxmlError('chunk 0x%04x @%d 的 size %d 未 4 字节对齐'
+                            % (ctype, p, cs))
+        if cs < hs or p + cs > len(data):
+            raise AxmlError('chunk 0x%04x @%d 的 size %d 越界' % (ctype, p, cs))
+        p += cs
+    if p != len(data):
+        raise AxmlError('chunk 链在 %d 处结束，文件长 %d' % (p, len(data)))
 
 
 # ─────────────────────────────────────────── 高层辅助

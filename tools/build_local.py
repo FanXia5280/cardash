@@ -212,6 +212,18 @@ def main():
     if FAILED:
         return
 
+    # ── 5b. 用系统同款解析器校验清单（aapt2 的 ResXMLTree 与框架一致）
+    aapt2 = os.path.join(bt, 'aapt2.exe' if os.name == 'nt' else 'aapt2')
+    if os.path.isfile(aapt2):
+        ok, out = run('aapt2 解析清单', [aapt2, 'dump', 'badging', out_apk], tail=None)
+        bad = ('error:' in out.lower()) or ('is not on an integer boundary' in out)
+        if not ok or bad:
+            say('!!! 系统解析器无法解析该清单，装到车机上会报「APK解析器异常」，中止')
+            sys.exit(1)
+        say('   OK  aapt2 能正常解析，与框架一致')
+    else:
+        say('   （找不到 aapt2，跳过解析校验）')
+
     # ── 6. 校验签名证书
     ok, out = run('校验签名证书', [java, '-jar', apksigner, 'verify',
                                    '--print-certs', out_apk], tail=None)
