@@ -22,10 +22,13 @@ struct DashboardView: View {
 
                 ZStack {
                     VStack(spacing: 0) {
-                        // ── 顶栏：左上日期时间 / 右上海拔 ──
+                        // ── 顶栏：左上日期时间 / 中间导航摘要 / 右上海拔 ──
                         HStack(alignment: .top) {
                             ClockPanel(now: now, scale: k)
-                            Spacer(minLength: 12)
+                            Spacer(minLength: 10)
+                            NavSummaryPanel(nav: model.displayNav, scale: k)
+                                .padding(.top, k * 4)
+                            Spacer(minLength: 10)
                             AltitudePanel(altitude: model.displayAltitude, scale: k)
                         }
 

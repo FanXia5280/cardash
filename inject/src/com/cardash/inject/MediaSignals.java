@@ -32,6 +32,8 @@ public final class MediaSignals {
     private volatile ComponentName working;
     /** 上一次计算封面用的曲目标识，用来避免每 600ms 重新压一次图 */
     private String lastCoverKey;
+    /** 上一次查歌词的曲目标识 */
+    private String lastLyricKey;
 
     public void start(Context context) {
         if (running) return;
@@ -149,6 +151,7 @@ public final class MediaSignals {
         hub.setSource("music", "mediasession:"
                 + (working == null ? "?" : working.getShortClassName()));
         updateCover(hub, md);
+        updateLyrics(hub);
     }
 
     /**
@@ -212,6 +215,40 @@ public final class MediaSignals {
             hub.mCover = null;
             hub.setSource("cover", "err:" + t.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * 歌词：只在切歌时去网上拉一次。
+     *
+     * 拉歌词是网络请求，会阻塞几百毫秒，绝不能放在这个轮询线程上，
+     * 所以丢给独立线程；拉回来时先确认还没切歌，免得把上一首的歌词贴到新歌上。
+     */
+    private void updateLyrics(StateHub hub) {
+        String title = hub.mTitle;
+        String key = title + '|' + hub.mArtist;
+        if (key.equals(lastLyricKey)) return;
+        lastLyricKey = key;
+
+        hub.mLrc = null;
+        if (title == null) return;
+
+        final String t = title;
+        final String a = hub.mArtist;
+        Thread th = new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    String lrc = Lyrics.fetch(t, a);
+                    StateHub now = StateHub.get();
+                    if (lrc != null && t.equals(now.mTitle)) {
+                        now.mLrc = lrc;
+                    }
+                } catch (Throwable ignored) {
+                    // 没网 / 查不到就是没歌词，不影响其它
+                }
+            }
+        }, "cardash-lyric");
+        th.setDaemon(true);
+        th.start();
     }
 
     private List<MediaController> trySessions(ComponentName cn) {

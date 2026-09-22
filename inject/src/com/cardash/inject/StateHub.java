@@ -40,11 +40,25 @@ public final class StateHub {
     public volatile Double mDuration;
     /** 专辑封面，base64(JPEG)。体积压到 ~10KB 以内，直接塞进 JSON 给 iPhone 用。 */
     public volatile String mCover;
+    /**
+     * 同步歌词，紧凑格式：「起始秒|歌词」逐行、\n 连接。
+     * 只在切歌时更新一次，iPhone 按播放位置自己切行 —— 比每 200ms 推一次
+     * 「当前歌词」省得多，也能跟到几十毫秒的精度。
+     */
+    public volatile String mLrc;
 
     // ── 导航 ──
     /** 监听服务收到过多少条通知（判断监听是否真的连上） */
     public volatile long navSeen;
     public volatile boolean navActive;
+    /** 转向类型：left/right/slightLeft/slightRight/straight/uturn/round/arrive/merge，给 iPhone 画图标 */
+    public volatile String navTurn;
+    /** 第二个距离，例如「注意距离 191 米」 */
+    public volatile String navAfter;
+    /** 剩余时间，例如「48 分钟」—— 显示在顶栏中间 */
+    public volatile String navEta;
+    /** 剩余总里程，例如「201 公里」—— 显示在顶栏中间 */
+    public volatile String navRemain;
     public volatile String navTitle;
     public volatile String navSub;
     public volatile String navDistance;
@@ -80,6 +94,7 @@ public final class StateHub {
         mPosition = null;
         mDuration = null;
         mCover = null;
+        mLrc = null;
     }
 
     private boolean navFresh() {
@@ -113,6 +128,7 @@ public final class StateHub {
              .append(",\"position\":").append(Json.num(mPosition))
              .append(",\"duration\":").append(Json.num(mDuration))
              .append(",\"cover\":").append(Json.esc(mCover))
+             .append(",\"lrc\":").append(Json.esc(mLrc))
              .append('}');
         } else {
             b.append("null");
@@ -125,6 +141,10 @@ public final class StateHub {
              .append(",\"title\":").append(Json.esc(navTitle))
              .append(",\"subtitle\":").append(Json.esc(navSub))
              .append(",\"distance\":").append(Json.esc(navDistance))
+             .append(",\"after\":").append(Json.esc(navAfter))
+             .append(",\"eta\":").append(Json.esc(navEta))
+             .append(",\"remain\":").append(Json.esc(navRemain))
+             .append(",\"turn\":").append(Json.esc(navTurn))
              .append(",\"from\":").append(Json.esc(navSource))
              .append('}');
         } else {

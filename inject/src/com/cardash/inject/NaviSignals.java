@@ -43,6 +43,68 @@ public final class NaviSignals {
     private static final Pattern DISTANCE = Pattern.compile(
             "(\\d+(?:\\.\\d+)?)\\s*(公里|千米|米|km|m)");
 
+    /** 剩余时间：「48 分钟」「1 小时 20 分钟」 */
+    private static final Pattern ETA_MIN = Pattern.compile("(\\d+)\\s*(?:分钟|分)");
+    private static final Pattern ETA_HOUR = Pattern.compile("(\\d+)\\s*(?:小时|时|h)");
+
+    /** 剩余总里程：优先「还有 / 剩余 / 全程」后面跟的距离 */
+    private static final Pattern REMAIN = Pattern.compile(
+            "(?:还有|剩余|距离目的地|全程|距终点)\\s*(\\d+(?:\\.\\d+)?\\s*(?:公里|千米|米|km|m))");
+
+    /** 从提示文字里推断转向类型，iPhone 拿它画箭头图标 */
+    private static String turnOf(String s) {
+        if (s == null) return null;
+        if (s.contains("掉头") || s.contains("调头")) return "uturn";
+        if (s.contains("环岛")) return "round";
+        if (s.contains("左前方") || s.contains("左前")) return "slightLeft";
+        if (s.contains("右前方") || s.contains("右前")) return "slightRight";
+        if (s.contains("左转") || s.contains("靠左") || s.contains("向左")) return "left";
+        if (s.contains("右转") || s.contains("靠右") || s.contains("向右")) return "right";
+        if (s.contains("直行") || s.contains("进入主路") || s.startsWith("沿")) return "straight";
+        if (s.contains("匝道") || s.contains("汇入")) return "merge";
+        if (s.contains("到达")) return "arrive";
+        return null;
+    }
+
+    /** 「48 分钟」「1 小时」这类剩余时间 */
+    private static String etaOf(String... texts) {
+        for (String t : texts) {
+            if (t == null) continue;
+            Matcher h = ETA_HOUR.matcher(t);
+            Matcher m = ETA_MIN.matcher(t);
+            boolean hasH = h.find();
+            boolean hasM = m.find();
+            if (hasH && hasM) return h.group(1) + " 小时 " + m.group(1) + " 分钟";
+            if (hasH) return h.group(1) + " 小时";
+            if (hasM) return m.group(1) + " 分钟";
+        }
+        return null;
+    }
+
+    /** 剩余总里程 */
+    private static String remainOf(String... texts) {
+        for (String t : texts) {
+            if (t == null) continue;
+            Matcher m = REMAIN.matcher(t);
+            if (m.find()) return m.group(1).replaceAll("\\s+", " ");
+        }
+        return null;
+    }
+
+    /** 一行文字里出现的所有距离，按出现顺序 */
+    private static java.util.List<String> distancesOf(String... texts) {
+        java.util.List<String> out = new java.util.ArrayList<String>(4);
+        for (String t : texts) {
+            if (t == null) continue;
+            Matcher m = DISTANCE.matcher(t);
+            while (m.find()) {
+                String d = m.group(0).replaceAll("\\s+", " ");
+                if (!out.contains(d)) out.add(d);
+            }
+        }
+        return out;
+    }
+
     private static final Pattern BRACKET = Pattern.compile("^[\\[(（【]([^\\])）】]+)[\\])）】]\\s*");
 
     /** 转向动作关键词，命中即认为这句是导航提示 */
@@ -177,7 +239,15 @@ public final class NaviSignals {
         StateHub hub = StateHub.get();
         hub.navTitle = head != null ? head : sub;
         hub.navSub = (sub != null && !sub.equals(hub.navTitle)) ? sub : null;
-        hub.navDistance = extractDistance(title, text, subText, bigText);
+
+        // 顶栏中间那两格 + 右侧卡片的第二个距离
+        java.util.List<String> ds = distancesOf(title, bigText, text, subText, infoText);
+        hub.navDistance = ds.isEmpty() ? null : ds.get(0);
+        hub.navAfter = ds.size() > 1 ? ds.get(1) : null;
+        hub.navEta = etaOf(title, bigText, text, subText, infoText);
+        hub.navRemain = remainOf(title, bigText, text, subText, infoText);
+        hub.navTurn = turnOf(firstNonEmpty(head, sub, subText, title, text));
+
         hub.navActive = true;
         hub.navUpdatedAt = System.currentTimeMillis();
         hub.navSource = "notify:" + pkg;
@@ -308,6 +378,20 @@ public final class NaviSignals {
         hub.navTitle = title;
         hub.navSub = sub;
         hub.navDistance = distance;
+        hub.navTurn = turnOf(title);
+
+        // 读屏能拿到整个界面的文字，顺带把顶栏的剩余时间和剩余里程也抠出来
+        StringBuilder all = new StringBuilder(256);
+        for (String t : texts) {
+            if (t == null) continue;
+            if (all.length() > 0) all.append(' ');
+            all.append(t);
+        }
+        hub.navEta = etaOf(all.toString());
+        hub.navRemain = remainOf(all.toString());
+        java.util.List<String> ds = distancesOf(all.toString());
+        if (ds.size() > 1) hub.navAfter = ds.get(1);
+
         hub.navActive = true;
         hub.navUpdatedAt = System.currentTimeMillis();
         hub.navSource = "a11y:" + pkg;

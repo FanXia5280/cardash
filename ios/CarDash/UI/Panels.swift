@@ -164,22 +164,53 @@ struct MusicPanel: View {
     let music: MusicState?
     let scale: CGFloat
 
+    /// 单击卡片在「歌手」和「两行歌词」之间切换
+    @State private var showLyrics = false
+
+    private var lyricLines: [String] {
+        music?.lyricLines(at: music?.position) ?? []
+    }
+
     var body: some View {
         HStack(spacing: scale * 14) {
             cover
 
             VStack(alignment: .leading, spacing: scale * 4) {
-                Text(music?.title ?? "未在播放")
-                    .font(.system(size: scale * 18, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                HStack(spacing: scale * 6) {
+                    Text(music?.title ?? "未在播放")
+                        .font(.system(size: scale * 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
 
-                Text(music?.artist ?? "车机暂无媒体会话")
-                    .font(.system(size: scale * 13, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    // 有歌词时给个小提示，不然用户不知道能点
+                    if !lyricLines.isEmpty && !showLyrics {
+                        Image(systemName: "text.quote")
+                            .font(.system(size: scale * 9, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.42))
+                    }
+                }
+
+                if showLyrics && !lyricLines.isEmpty {
+                    // 两行歌词：当前行亮、下一行暗，随播放位置自动往下走
+                    VStack(alignment: .leading, spacing: scale * 2) {
+                        ForEach(Array(0..<min(2, lyricLines.count)), id: \.self) { i in
+                            Text(lyricLines[i])
+                                .font(.system(size: scale * (i == 0 ? 13.5 : 12),
+                                              weight: i == 0 ? .semibold : .regular))
+                                .foregroundStyle(.white.opacity(i == 0 ? 0.95 : 0.48))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .frame(height: scale * 32, alignment: .top)
+                } else {
+                    Text(lyricHint)
+                        .font(.system(size: scale * 13, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
 
                 progressBar
                     .padding(.top, scale * 5)
@@ -188,6 +219,18 @@ struct MusicPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+        .contentShape(Rectangle())
+        // 内层手势优先于外面「点任意位置开设置」，所以点音乐卡不会弹设置
+        .onTapGesture {
+            if !lyricLines.isEmpty {
+                showLyrics.toggle()
+            }
+        }
+    }
+
+    private var lyricHint: String {
+        if let a = music?.artist, !a.isEmpty { return a }
+        return "车机暂无媒体会话"
     }
 
     private var cover: some View {
@@ -240,32 +283,94 @@ struct NavigationPanel: View {
 
     private var active: Bool { nav?.isActive ?? false }
 
+    /// 道路名优先用 subtitle（车机把转向动作放 title、路名放 subtitle）
+    private var road: String? {
+        for c in [nav?.subtitle, nav?.title] {
+            if let s = c, !s.isEmpty, s != nav?.distance { return s }
+        }
+        return nil
+    }
+
     var body: some View {
-        VStack(alignment: .trailing, spacing: scale * 8) {
+        VStack(alignment: .trailing, spacing: scale * 5) {
             if active {
-                if let d = nav?.distance, !d.isEmpty {
-                    Text(d)
-                        .font(.system(size: scale * 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(hex: 0x7CE0A0))
+                // ── 转向图标 + 下一个动作的距离（对应参考图红框里最醒目的那行）──
+                HStack(alignment: .center, spacing: scale * 10) {
+                    Image(systemName: nav?.symbolName ?? "arrow.up")
+                        .font(.system(size: scale * 30, weight: .bold))
+                        .foregroundStyle(Color(hex: 0x8FD8FF))
+
+                    Text(nav?.distance ?? nav?.title ?? "--")
+                        .font(.system(size: scale * 32, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.45)
                 }
-                Text(nav?.title ?? "")
-                    .font(.system(size: scale * 23, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.trailing)
-                    .lineLimit(2)
-                Text(nav?.subtitle ?? "")
-                    .font(.system(size: scale * 14, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineLimit(1)
+
+                if let road {
+                    Text(road)
+                        .font(.system(size: scale * 17, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.94))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+
+                if let a = nav?.after, !a.isEmpty {
+                    Text("注意距离 \(a)")
+                        .font(.system(size: scale * 12.5, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.60))
+                        .lineLimit(1)
+                }
             } else {
-                Text("暂无导航信息")
-                    .font(.system(size: scale * 23, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
+                HStack(spacing: scale * 10) {
+                    Image(systemName: "location.slash")
+                        .font(.system(size: scale * 22, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                    Text("暂无导航")
+                        .font(.system(size: scale * 22, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
                 Text("请在车机开启导航")
-                    .font(.system(size: scale * 14, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.58))
+                    .font(.system(size: scale * 13, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.55))
             }
         }
+        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+    }
+}
+
+// MARK: - 顶栏中间：还有多久 / 还有多远到目的地
+
+/// 对应参考图顶栏中间那两格：「⬆ 48 分钟  201 公里」。
+/// 导航没开的时候整块淡出，不占视觉。
+struct NavSummaryPanel: View {
+    let nav: NavState?
+    let scale: CGFloat
+
+    private var active: Bool { nav?.isActive ?? false }
+
+    var body: some View {
+        HStack(spacing: scale * 13) {
+            Image(systemName: nav?.symbolName ?? "arrow.up")
+                .font(.system(size: scale * 15, weight: .bold))
+                .foregroundStyle(.white.opacity(0.88))
+
+            if let eta = nav?.eta, !eta.isEmpty {
+                Text(eta)
+                    .font(.system(size: scale * 17, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+            }
+            if let r = nav?.remain, !r.isEmpty {
+                Text(r)
+                    .font(.system(size: scale * 17, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+        }
+        .opacity(active ? 1 : 0)
+        .animation(.easeInOut(duration: 0.25), value: active)
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 }
