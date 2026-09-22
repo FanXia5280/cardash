@@ -132,6 +132,20 @@ def build_components(doc, ns, a11y_res):
     toks.append(Token('end', name=E('meta-data')))
     toks.append(Token('end', name=E('service')))
 
+    # 5) 启动广播：开机 / 装完新包立刻拉起桥接
+    toks.append(Token('start', name=E('receiver'), attrs=[
+        A('name', 'com.cardash.inject.BootReceiver'),
+        B('exported', True),
+    ]))
+    toks.append(Token('start', name=E('intent-filter'), attrs=[]))
+    for act in ('android.intent.action.BOOT_COMPLETED',
+                'android.intent.action.LOCKED_BOOT_COMPLETED',
+                'android.intent.action.MY_PACKAGE_REPLACED'):
+        toks.append(Token('start', name=E('action'), attrs=[A('name', act)]))
+        toks.append(Token('end', name=E('action')))
+    toks.append(Token('end', name=E('intent-filter')))
+    toks.append(Token('end', name=E('receiver')))
+
     return toks
 
 

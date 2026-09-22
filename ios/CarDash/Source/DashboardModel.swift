@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Darwin
 
 /// 仪表盘数据中枢：合并「车机桥接推送」与「本机传感器」两路数据。
 /// 车机数据优先，取不到时自动退回本机 GPS。
@@ -8,6 +8,7 @@ final class DashboardModel: ObservableObject {
     // MARK: - 车机数据
     @Published private(set) var car: CarSnapshot?
     @Published private(set) var link: LinkStatus = .idle
+    @Published private(set) var carHost: String?
 
     // MARK: - 本机传感器
     @Published private(set) var localSpeed: Double?
@@ -17,7 +18,10 @@ final class DashboardModel: ObservableObject {
 
     // MARK: - 设置
     @Published var host: String {
-        didSet { UserDefaults.standard.set(host, forKey: Self.hostKey) }
+        didSet {
+            UserDefaults.standard.set(host, forKey: Self.hostKey)
+            lastSuccess = .distantPast
+        }
     }
 
     static let defaultPort = 8765
@@ -25,19 +29,31 @@ final class DashboardModel: ObservableObject {
 
     private let sensors = LocalSensors()
     private let session: URLSession
+    private let scanSession: URLSession
     private var timer: Timer?
+    private var watchdog: Timer?
     private var inFlight = false
     private var lastSuccess = Date.distantPast
+    private var lastScan = Date.distantPast
+    private var scanning = false
     private var started = false
 
     init() {
         host = UserDefaults.standard.string(forKey: Self.hostKey) ?? ""
+
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 2
         cfg.timeoutIntervalForResource = 3
         cfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         cfg.waitsForConnectivity = false
         session = URLSession(configuration: cfg)
+
+        let scanCfg = URLSessionConfiguration.ephemeral
+        scanCfg.timeoutIntervalForRequest = 0.6
+        scanCfg.timeoutIntervalForResource = 1.0
+        scanCfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        scanCfg.waitsForConnectivity = false
+        scanSession = URLSession(configuration: scanCfg)
     }
 
     // MARK: - 生命周期
@@ -62,21 +78,41 @@ final class DashboardModel: ObservableObject {
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
+
+        // 连不上就自动扫网段找车机
+        let w = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            self?.watchdogTick()
+        }
+        RunLoop.main.add(w, forMode: .common)
+        watchdog = w
+
         poll()
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
+        timer?.invalidate(); timer = nil
+        watchdog?.invalidate(); watchdog = nil
     }
 
-    /// 允许外部（设置页）立即重连
+    /// 设置页里的「立即重连」
     func reconnectNow() {
         lastSuccess = .distantPast
+        lastScan = .distantPast
         poll()
     }
 
-    // MARK: - 网络
+    /// 设置页里的「搜索车机」
+    func searchNow() {
+        scanSubnet()
+    }
+
+    private func watchdogTick() {
+        guard Date().timeIntervalSince(lastSuccess) > 8 else { return }
+        guard Date().timeIntervalSince(lastScan) > 45 else { return }
+        scanSubnet()
+    }
+
+    // MARK: - 轮询
 
     private var normalizedURL: URL? {
         var h = host.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -91,7 +127,7 @@ final class DashboardModel: ObservableObject {
 
     private func poll() {
         guard let url = normalizedURL else {
-            link = .idle
+            link = scanning ? .scanning : .idle
             return
         }
         guard !inFlight else { return }
@@ -107,9 +143,11 @@ final class DashboardModel: ObservableObject {
                     self.car = snap
                     self.lastSuccess = Date()
                     self.link = .online
+                    self.carHost = self.host
                     return
                 }
 
+                if self.scanning { return }
                 if (response as? HTTPURLResponse) != nil {
                     self.link = .failed("车机返回异常")
                 } else if error != nil {
@@ -119,6 +157,106 @@ final class DashboardModel: ObservableObject {
                 }
             }
         }.resume()
+    }
+
+    // MARK: - 自动搜索车机
+
+    /// 本机所在的 /24 网段。只认 WiFi / 热点网桥，**不碰蜂窝网**，避免误扫运营商网段。
+    private func localPrefixes() -> [String] {
+        var result: [String] = []
+        var addrs: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&addrs) == 0, let first = addrs else { return result }
+        defer { freeifaddrs(addrs) }
+
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let p = ptr {
+            let ifa = p.pointee
+            defer { ptr = ifa.ifa_next }
+            guard let sa = ifa.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
+
+            let name = String(cString: ifa.ifa_name)
+            // en0 = WiFi，bridge100 = 个人热点网桥；pdp_ip0 是蜂窝，必须排除
+            guard name.hasPrefix("en") || name.hasPrefix("bridge") else { continue }
+
+            var buf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(sa, socklen_t(sa.pointee.sa_len), &buf,
+                              socklen_t(buf.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            let ip = String(cString: buf)
+            guard !ip.hasPrefix("127."), !ip.hasPrefix("169.254.") else { continue }
+
+            let parts = ip.split(separator: ".")
+            guard parts.count == 4 else { continue }
+            let prefix = "\(parts[0]).\(parts[1]).\(parts[2])"
+            guard prefix.hasPrefix("192.168.") || prefix.hasPrefix("10.")
+                || prefix.hasPrefix("172.") else { continue }
+            if !result.contains(prefix) {
+                result.append(prefix)
+            }
+        }
+        return result
+    }
+
+    private func scanSubnet() {
+        guard !scanning else { return }
+        let prefixes = localPrefixes()
+        guard let prefix = prefixes.first else {
+            link = .failed("没有可用局域网，请先连车机热点")
+            return
+        }
+
+        scanning = true
+        lastScan = Date()
+        link = .scanning
+
+        let hosts = (2...254).map { "\(prefix).\($0)" }
+        let lock = NSLock()
+        var found: String?
+        let group = DispatchGroup()
+        let sem = DispatchSemaphore(value: 32)
+        let session = scanSession
+
+        for h in hosts {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                sem.wait()
+                defer { sem.signal(); group.leave() }
+                lock.lock(); let done = found != nil; lock.unlock()
+                if done || self == nil { return }
+                if DashboardModel.probe(host: h, session: session) {
+                    lock.lock()
+                    if found == nil { found = h }
+                    lock.unlock()
+                }
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            self.scanning = false
+            if let found {
+                self.host = "\(found):\(Self.defaultPort)"
+                self.lastSuccess = .distantPast
+                self.poll()
+            } else if Date().timeIntervalSince(self.lastSuccess) > 8 {
+                self.link = .failed("网段内没找到车机")
+            }
+        }
+    }
+
+    private static func probe(host: String, session: URLSession) -> Bool {
+        guard let url = URL(string: "http://\(host):\(defaultPort)/health") else { return false }
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        let task = session.dataTask(with: url) { data, _, _ in
+            if let d = data, let s = String(data: d, encoding: .utf8), s.contains("ok") {
+                ok = true
+            }
+            sem.signal()
+        }
+        task.resume()
+        _ = sem.wait(timeout: .now() + 0.55)
+        task.cancel()
+        return ok
     }
 
     // MARK: - 对外展示值

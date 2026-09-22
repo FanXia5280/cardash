@@ -8,15 +8,17 @@ struct SettingsSheet: View {
         NavigationView {
             Form {
                 Section {
-                    TextField("例如 192.168.43.1", text: $model.host)
+                    TextField("留空则自动搜索", text: $model.host)
                         .keyboardType(.numbersAndPunctuation)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                    Button("自动搜索车机") { model.searchNow() }
                     Button("立即重连") { model.reconnectNow() }
                 } header: {
                     Text("车机地址")
                 } footer: {
-                    Text("端口默认 \(DashboardModel.defaultPort)，留空则只显示本机 GPS 数据。")
+                    Text("一般不用填：连上车机所在的网络后会自动扫描网段找到它。"
+                         + "手动填的话端口默认 \(DashboardModel.defaultPort)，不用写。")
                 }
 
                 Section("连接状态") {
@@ -25,6 +27,13 @@ struct SettingsSheet: View {
                         Spacer()
                         Text(model.link.label)
                             .foregroundStyle(model.link.isOnline ? .green : .secondary)
+                    }
+                    if let h = model.carHost, !h.isEmpty {
+                        HStack {
+                            Text("车机地址")
+                            Spacer()
+                            Text(h).foregroundStyle(.secondary)
+                        }
                     }
                     if let snap = model.car {
                         HStack {

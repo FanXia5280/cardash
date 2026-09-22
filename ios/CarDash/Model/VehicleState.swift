@@ -55,6 +55,7 @@ struct NavState: Codable, Equatable {
 enum LinkStatus: Equatable {
     case idle
     case searching
+    case scanning
     case online
     case failed(String)
 
@@ -62,6 +63,7 @@ enum LinkStatus: Equatable {
         switch self {
         case .idle: return "未连接"
         case .searching: return "正在连接车机…"
+        case .scanning: return "正在搜索车机…"
         case .online: return "已连接"
         case .failed(let m): return m
         }
