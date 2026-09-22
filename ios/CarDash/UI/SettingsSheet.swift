@@ -107,7 +107,7 @@ struct SettingsSheet: View {
                     HStack {
                         Text("桥接版本")
                         Spacer()
-                        Text(model.car?.src?["apkVer"] ?? "未连接")
+                        Text(bridgeVersion)
                             .foregroundStyle(.secondary)
                     }
                 } header: {
@@ -144,12 +144,24 @@ struct SettingsSheet: View {
 
     /// App 自己的版本号，来自 Info.plist。
     /// 用处很实际：改完一轮之后要能一眼确认装的是不是刚下载的那个 IPA。
-    /// 版本号跟 ios/project.yml 的 MARKETING_VERSION 走，
-    /// 括号里的构建号由 CI 注入（GitHub Actions 的 run_number）。
+    ///
+    /// ⚠️ Info.plist 里必须写 $(MARKETING_VERSION) / $(CURRENT_PROJECT_VERSION)，
+    /// 不能写死 —— 之前写死成 1.0.0，导致 project.yml 改版本、CI 注入构建号
+    /// 全都无效，App 里永远显示 1.0.0。
     private static var appVersion: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        return b == "1" ? v : "\(v) (\(b))"
+        return "\(v) (\(b))"
+    }
+
+    /// 车机上的桥接版本，来自 /state 的 src.apkVer。
+    ///
+    /// 三种情况必须分开显示 —— 之前统一显示「未连接」，
+    /// 结果车机装的是旧版 APK（没有 apkVer 字段）时会被误判成没连上。
+    private var bridgeVersion: String {
+        guard let snap = model.car else { return "未连接" }
+        if let v = snap.src?["apkVer"], !v.isEmpty { return v }
+        return "旧版 APK（无版本标识）"
     }
 
     private static let tsFormat: DateFormatter = {

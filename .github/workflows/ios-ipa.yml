@@ -27,6 +27,14 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Read version
+        id: ver
+        working-directory: ios
+        run: |
+          V=$(grep -m1 'MARKETING_VERSION' project.yml | sed 's/.*"\(.*\)".*/\1/')
+          echo "marketing=$V" >> "$GITHUB_OUTPUT"
+          echo "版本号 = $V  (build ${{ github.run_number }})"
+
       - name: Generate Xcode project
         working-directory: ios
         run: xcodegen generate
@@ -44,6 +52,8 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION="${{ steps.ver.outputs.marketing }}" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             build
 
       - name: Package unsigned IPA
