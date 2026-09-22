@@ -1,8 +1,14 @@
 import SwiftUI
+import UIKit
 
 struct SettingsSheet: View {
     @ObservedObject var model: DashboardModel
     @Environment(\.dismiss) private var dismiss
+
+    @State private var diagTitle = ""
+    @State private var diagText = ""
+    @State private var showDiag = false
+    @State private var loadingDiag = false
 
     var body: some View {
         NavigationView {
@@ -80,6 +86,20 @@ struct SettingsSheet: View {
             }
         }
         .navigationViewStyle(.stack)
+        .sheet(isPresented: $showDiag) {
+            DiagView(title: diagTitle, text: diagText)
+        }
+    }
+
+    private func load(_ path: String, _ title: String) {
+        loadingDiag = true
+        diagTitle = title
+        diagText = "正在读取 \(path) …"
+        model.fetchText(path: path) { text in
+            diagText = text
+            loadingDiag = false
+            showDiag = true
+        }
     }
 
     private static let tsFormat: DateFormatter = {
@@ -87,4 +107,39 @@ struct SettingsSheet: View {
         f.dateFormat = "HH:mm:ss"
         return f
     }()
+}
+
+/// 诊断文本查看器：等宽字体、可选中、一键复制。
+struct DiagView: View {
+    let title: String
+    let text: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationView {
+            ScrollView([.vertical, .horizontal]) {
+                Text(text)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding()
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(copied ? "已复制" : "复制") {
+                        UIPasteboard.general.string = text
+                        copied = true
+                    }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
 }

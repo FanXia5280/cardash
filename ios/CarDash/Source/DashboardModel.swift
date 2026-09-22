@@ -30,6 +30,8 @@ final class DashboardModel: ObservableObject {
     private let sensors = LocalSensors()
     private let session: URLSession
     private let scanSession: URLSession
+    /// 诊断文本可能挺大（/log 有几十 KB），单独给个宽松点的超时
+    private let diagSession: URLSession
     private var timer: Timer?
     private var watchdog: Timer?
     private var inFlight = false
@@ -54,6 +56,42 @@ final class DashboardModel: ObservableObject {
         scanCfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         scanCfg.waitsForConnectivity = false
         scanSession = URLSession(configuration: scanCfg)
+
+        let diagCfg = URLSessionConfiguration.ephemeral
+        diagCfg.timeoutIntervalForRequest = 10
+        diagCfg.timeoutIntervalForResource = 15
+        diagCfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        diagCfg.waitsForConnectivity = false
+        diagSession = URLSession(configuration: diagCfg)
+    }
+
+    /// 拉取车机上的诊断文本（/diag、/logcat、/log）。
+    /// 车机上没有浏览器，所以直接在 App 里读，省得在 Safari 里手打地址。
+    func fetchText(path: String, completion: @escaping (String) -> Void) {
+        var h = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        h = h.replacingOccurrences(of: "http://", with: "")
+        h = h.replacingOccurrences(of: "https://", with: "")
+        while h.hasSuffix("/") { h.removeLast() }
+        guard !h.isEmpty else {
+            completion("还没有车机地址。\n\n先在上面填地址，或点「自动搜索车机」。")
+            return
+        }
+        if !h.contains(":") { h += ":\(Self.defaultPort)" }
+        guard let url = URL(string: "http://\(h)\(path)") else {
+            completion("地址格式不对: \(h)")
+            return
+        }
+        diagSession.dataTask(with: url) { data, _, err in
+            let text: String
+            if let data, let s = String(data: data, encoding: .utf8) {
+                text = s
+            } else {
+                text = "读取失败：\(err?.localizedDescription ?? "车机没有响应")\n\n"
+                     + "地址: http://\(h)\(path)\n"
+                     + "确认 iPhone 和车机在同一个 WiFi/热点下。"
+            }
+            DispatchQueue.main.async { completion(text) }
+        }.resume()
     }
 
     // MARK: - 生命周期

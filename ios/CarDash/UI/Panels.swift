@@ -1,4 +1,26 @@
 import SwiftUI
+import UIKit
+
+// MARK: - 封面解码缓存
+
+/// 车机每 250ms 就会把同一张封面的 base64 重发一遍，这里做一层单条缓存，
+/// 避免每秒解码 4 次 JPEG。
+enum CoverImageCache {
+    private static var key: String?
+    private static var image: UIImage?
+
+    static func image(for base64: String?) -> UIImage? {
+        guard let b64 = base64, !b64.isEmpty else {
+            key = nil
+            image = nil
+            return nil
+        }
+        if b64 == key { return image }
+        key = b64
+        image = Data(base64Encoded: b64).flatMap { UIImage(data: $0) }
+        return image
+    }
+}
 
 // MARK: - 左上：日期 + 时间
 
