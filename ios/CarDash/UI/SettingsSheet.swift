@@ -96,6 +96,26 @@ struct SettingsSheet: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                Section {
+                    HStack {
+                        Text("App 版本")
+                        Spacer()
+                        Text(Self.appVersion)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("桥接版本")
+                        Spacer()
+                        Text(model.car?.src?["apkVer"] ?? "未连接")
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("版本")
+                } footer: {
+                    Text("装完先看这里核对：App 版本要和刚下载的 IPA 对得上，"
+                         + "桥接版本要和车机上那个 APK 对得上。")
+                }
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
@@ -120,6 +140,16 @@ struct SettingsSheet: View {
             loadingDiag = false
             showDiag = true
         }
+    }
+
+    /// App 自己的版本号，来自 Info.plist。
+    /// 用处很实际：改完一轮之后要能一眼确认装的是不是刚下载的那个 IPA。
+    /// 版本号跟 ios/project.yml 的 MARKETING_VERSION 走，
+    /// 括号里的构建号由 CI 注入（GitHub Actions 的 run_number）。
+    private static var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return b == "1" ? v : "\(v) (\(b))"
     }
 
     private static let tsFormat: DateFormatter = {
