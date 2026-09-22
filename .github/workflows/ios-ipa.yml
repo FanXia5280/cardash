@@ -72,6 +72,13 @@ jobs:
           name: CarDash IPA build ${{ github.run_number }}
           body: |
             未签名 IPA（unsigned），用 Sideloadly / AltStore / TrollStore 自行签名安装。
-            构建时间：${{ github.event.repository.updated_at }}
+
+            版本：1.1.0 (build ${{ github.run_number }})
+            提交：${{ github.sha }}
+
+            本版内容：
+            - 专辑封面显示（车机端把封面压成 240px JPEG base64 下发）
+            - 设置页新增「车机诊断」：logcat 取数诊断 / 厂商属性扫描 / 车机运行状态 / 桥接运行日志
+              车机上没有浏览器，这四个按钮可直接读，右上角「复制」能整段发出来
           files: ios/CarDash-unsigned.ipa
           make_latest: true

@@ -62,6 +62,26 @@ struct SettingsSheet: View {
                     }
                 }
 
+                Section {
+                    if loadingDiag {
+                        HStack {
+                            Text("正在读取…")
+                            Spacer()
+                            ProgressView()
+                        }
+                    } else {
+                        Button("logcat 取数诊断") { load("/logcat", "logcat 取数诊断") }
+                        Button("厂商属性扫描") { load("/scan", "厂商属性扫描") }
+                        Button("车机运行状态") { load("/diag", "车机运行状态") }
+                        Button("桥接运行日志") { load("/log", "桥接运行日志") }
+                    }
+                } header: {
+                    Text("车机诊断")
+                } footer: {
+                    Text("车机上没有浏览器也没关系，这里直接读。"
+                         + "打开后点右上角「复制」就能整段发出来。")
+                }
+
                 Section("本机传感器") {
                     HStack {
                         Text("定位权限")
