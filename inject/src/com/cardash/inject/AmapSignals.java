@@ -115,12 +115,11 @@ public final class AmapSignals {
         if (remainDis >= 0) hub.navRemain = fmtDistance(remainDis);
         if (eta != null) hub.navArrive = eta;
 
-        // ── 车速：车机缓存那个字段实测会一直卡在 0（和档位一样的毛病），
-        //    所以在它证明自己是活的之前，一律用高德广播的车速。
-        if (speed >= 0 && !hub.carSpeedTrusted) {
-            hub.speedKmh = (double) speed;
-            hub.setSource("speed", "amap:CUR_SPEED");
-        }
+        // ── 车速：**故意不采用高德广播的 CUR_SPEED** ──
+        // 用户要求只显示原车数据、和车机仪表盘一致。高德是第三方导航软件，
+        // 它给的车速（GPS 推算）和车机自身会有偏差，所以这里只把它记进
+        // 诊断信息，绝不写进 hub.speedKmh。
+        if (speed >= 0) hub.setSource("amapSpeed", String.valueOf(speed) + "（仅诊断，不采用）");
 
         if (limit > 0) hub.setSource("limit", String.valueOf(limit));
         if (lights >= 0) hub.setSource("lights", String.valueOf(lights));

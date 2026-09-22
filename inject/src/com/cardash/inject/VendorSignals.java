@@ -83,6 +83,24 @@ public final class VendorSignals {
     private Handler handler;
     private volatile boolean running;
 
+    // ── 车速：只认原车数据，三个来源按新鲜度排序 ──
+    //   1) vc_alias_vehicle_speed 实时推送          → speedAliasLive
+    //   2) CarS05InfoUtil.currentDrivingSpeedKmh    → speedFieldLive（看它会不会变）
+    //   3) cacheCarS05Info.speed 格式化滞后快照      → 仅当前两个都没有时兜底
+    // 明确不使用高德广播的 CUR_SPEED（第三方 GPS 推算，和仪表盘会有偏差）。
+    private volatile boolean speedAliasLive;
+    private volatile boolean speedFieldLive;
+    private volatile double lastSpeedField = Double.NaN;
+    /** 最后一次收到实时车速推送的时间。超过窗口没再收到就说明它断供了，让位给下一个来源 */
+    private volatile long speedAliasAt;
+    private static final long SPEED_ALIAS_WINDOW_MS = 15000;
+
+    /** 实时推送是不是还新鲜 */
+    private boolean speedAliasFresh() {
+        return speedAliasLive
+                && (System.currentTimeMillis() - speedAliasAt) < SPEED_ALIAS_WINDOW_MS;
+    }
+
     public void start(Context context) {
         if (running) return;
         running = true;
@@ -422,7 +440,10 @@ public final class VendorSignals {
         // 1) 先读 D.apk 自己的缓存 —— 纯字段读取，绝不会阻塞，
         //    档位/车速/总里程/续航都在里面，先把保底数据拿到手。
         readCache(hub);
-        readSpeedExtras(hub);
+        readSpeedField(hub);
+        hub.setSource("speedSrc", "实时推送=" + (speedAliasFresh() ? "在用" : (speedAliasLive ? "已断供" : "没收到"))
+                + " 字段=" + (speedFieldLive ? "在用" : "没动过")
+                + "（高德车速已禁用）");
 
         // 2) 电量百分比：车机实测不上报 EnergyInfo/SocPercent（psGetValueSync
         //    对全部 1276 个别名都返回 null），所以按用户要求用剩余续航折算。
@@ -570,9 +591,9 @@ public final class VendorSignals {
             if (d == null || d < 0) return false;
             // 别名就带 Kmh 字样，按 km/h 处理；数值明显过小才当成 m/s
             hub.speedKmh = d < 0.5 && d > 0 && isProbablyMs(raw) ? d * 3.6 : d;
-            // 这是车机主动推过来的实时值，比缓存字符串可信得多 ——
-            // 标记为可信之后就不会再被高德广播的车速覆盖
-            hub.carSpeedTrusted = true;
+            // 车机主动推过来的实时值，是三个原车来源里最新鲜的一个
+            speedAliasLive = true;
+            speedAliasAt = System.currentTimeMillis();
             hub.setSource("speed", "vendor:" + alias);
             return true;
         }
@@ -654,17 +675,12 @@ public final class VendorSignals {
             if (d == null || d < 0) return;
 
             if ("speed".equals(kind)) {
-                // 见过非 0 值才说明这个字段是活的（车在动）
-                if (d > 0) hub.carSpeedTrusted = true;
-
-                if (hub.carSpeedTrusted) {
+                // 这个缓存是格式化过的滞后快照，实测会卡在 0。
+                // 只要已经有更活的来源（实时推送 / currentDrivingSpeedKmh），
+                // 就绝不让它覆盖；完全没有时才拿它当保底。
+                if (!speedAliasFresh() && !speedFieldLive) {
                     hub.speedKmh = d;
                     hub.setSource("speed", "cache:" + field);
-                } else if (hub.speedKmh == null) {
-                    // 还什么都没有时先给个保底，免得仪表盘显示 "--"；
-                    // 高德那边一旦有值就会覆盖（见 AmapSignals）
-                    hub.speedKmh = d;
-                    hub.setSource("speed", "cache:" + field + "(未验证)");
                 }
             } else if ("odometer".equals(kind) && hub.odometerKm == null) {
                 hub.odometerKm = d;
@@ -809,20 +825,33 @@ public final class VendorSignals {
     }
 
     /**
-     * 顺带读几个可能更实时的车速字段。
+     * 车速来源之二：CarS05InfoUtil.currentDrivingSpeedKmh。
      *
-     * cacheCarS05Info.speed 是个格式化过的字符串（"0 km/h"）而且是滞后快照；
-     * CarS05InfoUtil 自己还存着一个 currentDrivingSpeedKmh，是数值型、由回调直接写，
-     * 比那个字符串新鲜得多。只要它给出过非 0 值就采信。
+     * 它是数值型、由厂商回调直接写，比 cacheCarS05Info.speed 那个格式化字符串新鲜得多。
+     *
+     * 怎么判断它是「活的」：**看它变不变**。
+     * 只要观察到它变过一次，就说明这个字段真的在被刷新，可以采信；
+     * 一次都没变过就说明它是个死字段（或者车一直停着 —— 那种情况下
+     * 缓存里也是 0，回落到缓存结果一样）。
      */
-    private void readSpeedExtras(StateHub hub) {
+    private void readSpeedField(StateHub hub) {
+        if (speedAliasFresh()) return;       // 实时推送最优先，无需再读字段
+
         Object v = readStatic("currentDrivingSpeedKmh");
         if (!(v instanceof Number)) return;
         double d = ((Number) v).doubleValue();
-        if (d <= 0) return;
-        hub.carSpeedTrusted = true;
-        hub.speedKmh = d;
-        hub.setSource("speed", "field:currentDrivingSpeedKmh");
+
+        if (Double.isNaN(lastSpeedField)) {
+            lastSpeedField = d;
+        } else if (Math.abs(d - lastSpeedField) > 0.01) {
+            speedFieldLive = true;           // 它变过 —— 是活的
+            lastSpeedField = d;
+        }
+
+        if (speedFieldLive) {
+            hub.speedKmh = d;
+            hub.setSource("speed", "field:currentDrivingSpeedKmh");
+        }
     }
 
     private static int[] readIntArray(Class<?> c, String name) {

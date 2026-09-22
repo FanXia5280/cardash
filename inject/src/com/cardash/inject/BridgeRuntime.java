@@ -404,9 +404,15 @@ public final class BridgeRuntime {
           .append(hub.src.get("lyrics") == null ? "（还没取）" : hub.src.get("lyrics"))
           .append('\n');
 
-        sb.append("\n【车速来源判定】\n");
-        sb.append("  车机缓存车速可信 = ").append(hub.carSpeedTrusted)
-          .append("（false 时一律用高德广播的车速）\n");
+        sb.append("\n【车速（只用原车数据，高德车速已禁用）】\n");
+        sb.append("  当前来源  = ")
+          .append(hub.src.get("speed") == null ? "（还没拿到）" : hub.src.get("speed")).append('\n');
+        sb.append("  来源活性  = ")
+          .append(hub.src.get("speedSrc") == null ? "?" : hub.src.get("speedSrc")).append('\n');
+        sb.append("  高德车速  = ")
+          .append(hub.src.get("amapSpeed") == null ? "（没收到）" : hub.src.get("amapSpeed"))
+          .append('\n');
+        sb.append("  说明: 实时别名推送 > currentDrivingSpeedKmh(会变) > 缓存快照(保底)\n");
 
         sb.append("\n【高德导航广播（导航数据的主力来源）】\n");
         sb.append(AmapSignals.rawSummary());
