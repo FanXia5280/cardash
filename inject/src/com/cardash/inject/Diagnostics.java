@@ -81,6 +81,32 @@ public final class Diagnostics {
         write(new File(d, "heartbeat.txt"), stamp() + "\n" + text + "\n", false);
     }
 
+    /**
+     * 读日志尾部，供 /log 接口用 —— 这样在 iPhone 浏览器里直接就能看，
+     * 不用去车机的文件管理器里翻。
+     */
+    public static String tail(int maxChars) {
+        File f = logFile;
+        if (f == null) return "（日志尚未初始化）";
+        if (!f.exists()) return "（日志文件不存在: " + f.getAbsolutePath() + "）";
+        try {
+            long len = f.length();
+            int take = (int) Math.min(len, Math.max(1024, maxChars));
+            byte[] buf = new byte[take];
+            java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r");
+            try {
+                raf.seek(len - take);
+                raf.readFully(buf);
+            } finally {
+                raf.close();
+            }
+            return "文件: " + f.getAbsolutePath() + "  (" + len + " 字节)\n\n"
+                    + new String(buf, "UTF-8");
+        } catch (Throwable t) {
+            return "读取失败: " + t;
+        }
+    }
+
     private static void write(File f, String text, boolean append) {
         if (f == null) return;
         try {

@@ -2,13 +2,16 @@ package com.cardash.inject;
 
 import android.content.ComponentName;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.util.Base64;
 
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 
 /**
@@ -27,6 +30,8 @@ public final class MediaSignals {
     private ComponentName[] candidates;
     private volatile boolean running;
     private volatile ComponentName working;
+    /** 上一次计算封面用的曲目标识，用来避免每 600ms 重新压一次图 */
+    private String lastCoverKey;
 
     public void start(Context context) {
         if (running) return;
@@ -140,7 +145,73 @@ public final class MediaSignals {
             hub.mDuration = null;
         }
 
-        hub.setSource("music", "mediasession");
+        // 记下到底是我们注入的监听器还是 D.apk 原有的那个在起作用，方便排查
+        hub.setSource("music", "mediasession:"
+                + (working == null ? "?" : working.getShortClassName()));
+        updateCover(hub, md);
+    }
+
+    /**
+     * 专辑封面。
+     *
+     * MediaMetadata 里封面是个 Bitmap，不能直接进 JSON，所以缩到 240px 再压成
+     * JPEG base64。iPhone 每 250ms 轮询一次 /state，封面必须足够小；而且只在
+     * 曲目变化时重算，平时复用同一个字符串。
+     */
+    private void updateCover(StateHub hub, MediaMetadata md) {
+        String key = hub.mTitle == null ? null
+                : (hub.mTitle + '|' + hub.mArtist + '|' + hub.mDuration);
+        if (key != null && key.equals(lastCoverKey)) return;
+        lastCoverKey = key;
+
+        hub.mCover = null;
+        if (md == null || key == null) return;
+
+        Bitmap src = null;
+        String[] keys = {
+                MediaMetadata.METADATA_KEY_ALBUM_ART,
+                MediaMetadata.METADATA_KEY_ART,
+                MediaMetadata.METADATA_KEY_DISPLAY_ICON,
+        };
+        for (String k : keys) {
+            try {
+                src = md.getBitmap(k);
+            } catch (Throwable ignored) {
+                src = null;
+            }
+            if (src != null) break;
+        }
+        if (src == null || src.isRecycled()) return;
+
+        try {
+            int w = src.getWidth(), h = src.getHeight();
+            if (w <= 0 || h <= 0) return;
+
+            int max = 240;
+            Bitmap out = src;
+            if (w > max || h > max) {
+                float s = Math.min((float) max / w, (float) max / h);
+                out = Bitmap.createScaledBitmap(src,
+                        Math.max(1, Math.round(w * s)),
+                        Math.max(1, Math.round(h * s)), true);
+            }
+
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(24 * 1024);
+            out.compress(Bitmap.CompressFormat.JPEG, 70, bos);
+            if (out != src) out.recycle();
+
+            byte[] bytes = bos.toByteArray();
+            // 太大就放弃：宁可没封面，也不能把 /state 撑爆
+            if (bytes.length > 48 * 1024) {
+                hub.setSource("cover", "too-big:" + bytes.length);
+                return;
+            }
+            hub.mCover = Base64.encodeToString(bytes, Base64.NO_WRAP);
+            hub.setSource("cover", bytes.length + "B");
+        } catch (Throwable t) {
+            hub.mCover = null;
+            hub.setSource("cover", "err:" + t.getClass().getSimpleName());
+        }
     }
 
     private List<MediaController> trySessions(ComponentName cn) {

@@ -31,6 +31,8 @@ struct MusicState: Codable, Equatable {
     var position: Double?
     /// 总时长（秒）
     var duration: Double?
+    /// 专辑封面，base64 编码的 JPEG（车机端已缩到 240px）
+    var cover: String?
 
     var progress: Double {
         guard let p = position, let d = duration, d > 1 else { return 0 }

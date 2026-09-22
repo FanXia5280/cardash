@@ -73,6 +73,14 @@ public final class BridgeRuntime {
             Diagnostics.log("无障碍自注册失败: " + t);
         }
 
+        // 没有通知使用权就拿不到媒体会话、也收不到导航通知
+        try {
+            NotificationHelper.ensureEnabled(app);
+            Diagnostics.log("通知使用权: " + hub.src.get("notify"));
+        } catch (Throwable t) {
+            Diagnostics.log("通知使用权处理失败: " + t);
+        }
+
         try {
             server = new HttpServer(PORT, new HttpServer.Handler() {
                 @Override
@@ -233,6 +241,11 @@ public final class BridgeRuntime {
         if (hub.carError != null) sb.append("  carError = ").append(hub.carError).append('\n');
         if (hub.mediaError != null) sb.append("  mediaError = ").append(hub.mediaError).append('\n');
         sb.append("  logcatLines = ").append(hub.logcatLines).append('\n');
+        sb.append("  logcatSeen = ").append(hub.logcatSeen)
+          .append("   logcatMatched = ").append(hub.logcatMatched).append('\n');
+
+        sb.append("\n想看原始日志就打开: ").append(primaryUrl()).append("/logcat\n");
+        sb.append("想看桥接运行日志打开: ").append(primaryUrl()).append("/log\n");
 
         return sb.toString();
     }
@@ -251,9 +264,67 @@ public final class BridgeRuntime {
         if ("/diag".equals(path)) {
             return StatusPage.diag();
         }
+        if ("/logcat".equals(path)) {
+            return logcatReport();
+        }
+        if ("/log".equals(path)) {
+            return Diagnostics.tail(64 * 1024);
+        }
+        if ("/hi".equals(path)) {
+            // 一个极短的连通性探测，给 iOS 的自动扫描用
+            return "ok";
+        }
         if ("/health".equals(path)) {
             return "ok";
         }
         return null;
+    }
+
+    /**
+     * logcat 取数的体检报告。
+     *
+     * 最关键的三个数：
+     *   logcatSeen    = 车机日志里含 CarPropertyValue 的行数
+     *   logcatMatched = 正则认出来的行数
+     *   topic 统计     = 认出来的信号名和出现次数
+     *
+     * seen 很大而 matched 是 0，说明车机打的格式和预想不一样 —— 看下面的原始样本；
+     * seen 本身就是 0，说明这条路根本不通，得换信号来源。
+     */
+    private static String logcatReport() {
+        StateHub hub = StateHub.get();
+        LogcatSignals lc = logcat;
+        StringBuilder sb = new StringBuilder(8192);
+
+        sb.append("logcat 取数诊断\n");
+        sb.append("  含 CarPropertyValue 的行 : ").append(hub.logcatSeen).append('\n');
+        sb.append("  正则匹配成功             : ").append(hub.logcatMatched).append('\n');
+        sb.append("  认出的 topic 种类        : ")
+          .append(lc == null ? "未启动" : String.valueOf(lc.topicCount())).append('\n');
+        sb.append("  logcatError              : ")
+          .append(hub.logcatError == null ? "无" : hub.logcatError).append('\n');
+        sb.append("  距上次匹配               : ")
+          .append(hub.logcatUpdatedAt == 0 ? "从未"
+                  : ((System.currentTimeMillis() - hub.logcatUpdatedAt) / 1000) + " 秒前")
+          .append('\n');
+
+        sb.append("\n【认出的 topic 统计】\n");
+        sb.append(lc == null ? "  （未启动）\n" : lc.topicSummary(25) + "\n");
+
+        sb.append("\n【原始日志样本：含 CarPropertyValue 的行】\n");
+        sb.append(lc == null ? "  （未启动）\n" : lc.rawSampleText());
+
+        sb.append("\n【没匹配上的车辆日志样本】\n");
+        sb.append(lc == null ? "  （未启动）\n" : lc.missSampleText());
+
+        sb.append("\n当前解析出的值\n");
+        sb.append("  车速   ").append(hub.speedKmh == null ? "--" : String.valueOf(hub.speedKmh)).append('\n');
+        sb.append("  档位   ").append(hub.gear == null ? "--" : hub.gear).append('\n');
+        sb.append("  电量   ").append(hub.soc == null ? "--" : String.valueOf(hub.soc)).append('\n');
+        sb.append("  续航   ").append(hub.rangeKm == null ? "--" : String.valueOf(hub.rangeKm)).append('\n');
+        sb.append("  总里程 ").append(hub.odometerKm == null ? "--" : String.valueOf(hub.odometerKm)).append('\n');
+        sb.append("  封面   ").append(hub.mCover == null ? "无" : (hub.mCover.length() + " 字符")).append('\n');
+
+        return sb.toString();
     }
 }

@@ -38,8 +38,12 @@ public final class StateHub {
     public volatile Boolean mPlaying;
     public volatile Double mPosition;
     public volatile Double mDuration;
+    /** 专辑封面，base64(JPEG)。体积压到 ~10KB 以内，直接塞进 JSON 给 iPhone 用。 */
+    public volatile String mCover;
 
     // ── 导航 ──
+    /** 监听服务收到过多少条通知（判断监听是否真的连上） */
+    public volatile long navSeen;
     public volatile boolean navActive;
     public volatile String navTitle;
     public volatile String navSub;
@@ -57,6 +61,10 @@ public final class StateHub {
     /** 收到过多少条车辆信号日志，用于判断链路是否活着 */
     public volatile long logcatLines;
     public volatile long logcatUpdatedAt;
+    /** 含 CarPropertyValue 的行数（不管认不认识） */
+    public volatile long logcatSeen;
+    /** 正则匹配成功的行数。seen>0 而 matched=0 说明日志格式和预想不一样，看 /logcat */
+    public volatile long logcatMatched;
 
     public void setSource(String key, String value) {
         synchronized (src) {
@@ -71,6 +79,7 @@ public final class StateHub {
         mPlaying = null;
         mPosition = null;
         mDuration = null;
+        mCover = null;
     }
 
     private boolean navFresh() {
@@ -103,6 +112,7 @@ public final class StateHub {
              .append(",\"playing\":").append(Json.bool(mPlaying))
              .append(",\"position\":").append(Json.num(mPosition))
              .append(",\"duration\":").append(Json.num(mDuration))
+             .append(",\"cover\":").append(Json.esc(mCover))
              .append('}');
         } else {
             b.append("null");
@@ -131,6 +141,9 @@ public final class StateHub {
             }
         }
         first = appendDiag(b, first, "logcatLines", String.valueOf(logcatLines));
+        first = appendDiag(b, first, "logcatSeen", String.valueOf(logcatSeen));
+        first = appendDiag(b, first, "logcatMatched", String.valueOf(logcatMatched));
+        first = appendDiag(b, first, "navSeen", String.valueOf(navSeen));
         appendDiag(b, first, "logcatAge", logcatFresh() ? "fresh" : "stale");
         appendDiag(b, first, "logcatError", logcatError);
         appendDiag(b, first, "carError", carError);

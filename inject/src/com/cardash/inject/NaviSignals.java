@@ -65,16 +65,27 @@ public final class NaviSignals {
 
     public static void onPosted(StatusBarNotification sbn) {
         if (sbn == null || sbn.getNotification() == null) return;
-        if (!isNavPackage(sbn.getPackageName())) return;
 
         Bundle extras = sbn.getNotification().extras;
         if (extras == null) return;
 
+        String pkg = sbn.getPackageName();
         String title = str(extras.getCharSequence(Notification.EXTRA_TITLE));
         String text = str(extras.getCharSequence(Notification.EXTRA_TEXT));
         String subText = str(extras.getCharSequence(Notification.EXTRA_SUB_TEXT));
         String bigText = str(extras.getCharSequence(Notification.EXTRA_BIG_TEXT));
         String infoText = str(extras.getCharSequence(Notification.EXTRA_INFO_TEXT));
+
+        StateHub.get().navSeen++;
+
+        if (!isNavPackage(pkg)) {
+            // 包名不在白名单里。但内容要是像导航就记下来 —— /logcat 里能看到，
+            // 好把车机真正的导航包名补进白名单，而不是靠猜。
+            if (looksLikeNav(title, text, subText, bigText, infoText)) {
+                recordCandidate(pkg, firstNonEmpty(title, bigText, text, infoText));
+            }
+            return;
+        }
 
         String head = firstNonEmpty(title, bigText, infoText);
         String sub = firstNonEmpty(text, subText, infoText);
@@ -93,7 +104,44 @@ public final class NaviSignals {
         hub.navDistance = extractDistance(title, text, subText, bigText);
         hub.navActive = true;
         hub.navUpdatedAt = System.currentTimeMillis();
-        hub.navSource = "notify:" + sbn.getPackageName();
+        hub.navSource = "notify:" + pkg;
+    }
+
+    // ─────────────────────────────────────── 导航包名探测
+
+    private static final java.util.Map<String, String> CANDIDATES =
+            new java.util.LinkedHashMap<>();
+    private static final int CAND_MAX = 15;
+
+    private static boolean looksLikeNav(String... values) {
+        for (String v : values) {
+            if (v == null) continue;
+            for (String w : TURN_WORDS) {
+                if (v.contains(w)) return true;
+            }
+            if (DISTANCE.matcher(v).find() && v.length() <= 40) return true;
+        }
+        return false;
+    }
+
+    private static void recordCandidate(String pkg, String sample) {
+        if (sample != null && sample.length() > 40) sample = sample.substring(0, 40);
+        synchronized (CANDIDATES) {
+            if (!CANDIDATES.containsKey(pkg) && CANDIDATES.size() >= CAND_MAX) return;
+            CANDIDATES.put(pkg, sample == null ? "" : sample);
+        }
+    }
+
+    /** 给 /logcat 用：内容像导航、但包名不在白名单里的通知来源。 */
+    public static String candidateSummary() {
+        synchronized (CANDIDATES) {
+            if (CANDIDATES.isEmpty()) return "  （没发现像导航的通知）\n";
+            StringBuilder sb = new StringBuilder();
+            for (java.util.Map.Entry<String, String> e : CANDIDATES.entrySet()) {
+                sb.append("  ").append(e.getKey()).append("  ::  ").append(e.getValue()).append('\n');
+            }
+            return sb.toString();
+        }
     }
 
     // ─────────────────────────────────────── 来源二：无障碍读屏

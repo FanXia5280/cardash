@@ -175,9 +175,18 @@ struct MusicPanel: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ))
-            Image(systemName: "music.note")
-                .font(.system(size: scale * 19, weight: .medium))
-                .foregroundStyle(.white.opacity(music == nil ? 0.45 : 0.85))
+
+            if let art = CoverImageCache.image(for: music?.cover) {
+                Image(uiImage: art)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: scale * 48, height: scale * 48)
+                    .clipShape(RoundedRectangle(cornerRadius: scale * 9))
+            } else {
+                Image(systemName: "music.note")
+                    .font(.system(size: scale * 19, weight: .medium))
+                    .foregroundStyle(.white.opacity(music == nil ? 0.45 : 0.85))
+            }
         }
         .frame(width: scale * 48, height: scale * 48)
         .overlay(
