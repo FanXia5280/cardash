@@ -52,6 +52,10 @@ public final class NaviSignals {
             "(?:还有|剩余|距离目的地|全程|距终点)\\s*(\\d+(?:\\.\\d+)?\\s*(?:公里|千米|米|km|m))");
 
     /** 从提示文字里推断转向类型，iPhone 拿它画箭头图标 */
+    public static String turnOfText(String s) {
+        return turnOf(s);
+    }
+
     private static String turnOf(String s) {
         if (s == null) return null;
         if (s.contains("掉头") || s.contains("调头")) return "uturn";

@@ -59,6 +59,8 @@ public final class StateHub {
     public volatile String navEta;
     /** 剩余总里程，例如「201 公里」—— 显示在顶栏中间 */
     public volatile String navRemain;
+    /** 预计到达时间文案，高德 ETA_TEXT 原样带过来 */
+    public volatile String navArrive;
     public volatile String navTitle;
     public volatile String navSub;
     public volatile String navDistance;
@@ -144,6 +146,7 @@ public final class StateHub {
              .append(",\"after\":").append(Json.esc(navAfter))
              .append(",\"eta\":").append(Json.esc(navEta))
              .append(",\"remain\":").append(Json.esc(navRemain))
+             .append(",\"arrive\":").append(Json.esc(navArrive))
              .append(",\"turn\":").append(Json.esc(navTurn))
              .append(",\"from\":").append(Json.esc(navSource))
              .append('}');

@@ -91,6 +91,8 @@ struct NavState: Codable, Equatable {
     var remain: String?
     /// 转向类型：left/right/slightLeft/slightRight/straight/uturn/round/arrive/merge
     var turn: String?
+    /// 预计到达时间文案（高德 ETA_TEXT 原文）
+    var arrive: String?
 
     var isActive: Bool { active ?? false }
 

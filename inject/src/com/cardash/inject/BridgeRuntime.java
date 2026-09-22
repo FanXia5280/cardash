@@ -45,6 +45,16 @@ public final class BridgeRuntime {
             // 附加导航包加载失败无所谓
         }
 
+        // 导航的主力数据源：高德车机版主动发的隐式广播
+        try {
+            AmapSignals.register(app);
+        } catch (Throwable t) {
+            Diagnostics.log("注册高德广播失败: " + t);
+        }
+
+        // 这里 hub 还没声明，直接用 get()
+        StateHub.get().setSource("apkVer", versionName(app));
+
         StateHub hub = StateHub.get();
         hub.setSource("server", "starting");
 
@@ -138,6 +148,21 @@ public final class BridgeRuntime {
     /** 当前监听地址：优先 WiFi 类接口，避开蜂窝网地址 */
     public static String primaryUrl() {
         return "http://" + Net.primary() + ":" + PORT;
+    }
+
+    /**
+     * 当前注入包的 versionName。
+     *
+     * 排查时最常见的坑就是「车机上装的其实是旧版」—— 之前为此白折腾过好几轮。
+     * 现在把它写进 /diag 和 /state 的 src，一眼就能确认。
+     */
+    private static String versionName(Context ctx) {
+        try {
+            return ctx.getPackageManager()
+                    .getPackageInfo(ctx.getPackageName(), 0).versionName;
+        } catch (Throwable t) {
+            return "unknown";
+        }
     }
 
     /** 一行状态，通知与心跳文件共用 */
@@ -372,6 +397,9 @@ public final class BridgeRuntime {
         sb.append("\n【无障碍事件来源统计（用来找车机导航的真包名）】\n");
         sb.append("  无障碍连接次数 = ").append(NaviAccessibilityService.connectCount()).append('\n');
         sb.append(NaviSignals.a11yPackageSummary());
+
+        sb.append("\n【高德导航广播（导航数据的主力来源）】\n");
+        sb.append(AmapSignals.rawSummary());
 
         sb.append("\n【车机实时推送（挂钩 D.apk 的监听器，档位就在这里）】\n");
         if (vendor != null) {

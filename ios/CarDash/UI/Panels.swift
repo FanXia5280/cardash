@@ -322,6 +322,13 @@ struct NavigationPanel: View {
                         .foregroundStyle(.white.opacity(0.60))
                         .lineLimit(1)
                 }
+
+                if let arr = nav?.arrive, !arr.isEmpty {
+                    Text(arr)
+                        .font(.system(size: scale * 12.5, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.60))
+                        .lineLimit(1)
+                }
             } else {
                 HStack(spacing: scale * 10) {
                     Image(systemName: "location.slash")
