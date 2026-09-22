@@ -20,6 +20,7 @@ CHUNK_START_ELEMENT = 0x0102
 CHUNK_END_ELEMENT = 0x0103
 CHUNK_CDATA = 0x0104
 
+TYPE_REFERENCE = 0x01
 TYPE_STRING = 0x03
 TYPE_INT_DEC = 0x10
 TYPE_INT_BOOLEAN = 0x12
@@ -294,6 +295,12 @@ def make_int_attr(doc, attr_name, value, ns=NO_INDEX):
 
 def make_bool_attr(doc, attr_name, value, ns=NO_INDEX):
     return Attr(ns, doc.attr_name_index(attr_name), NO_INDEX, TYPE_INT_BOOLEAN, 1 if value else 0)
+
+
+def make_ref_attr(doc, attr_name, res_id, ns=NO_INDEX):
+    """资源引用属性，例如 android:resource="@xml/xxx"。"""
+    return Attr(ns, doc.attr_name_index(attr_name), NO_INDEX,
+                TYPE_REFERENCE, res_id & 0xFFFFFFFF)
 
 
 def find_element(doc, name, occurrence=0):

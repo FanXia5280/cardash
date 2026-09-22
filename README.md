@@ -83,6 +83,12 @@ iPhone 上当仪表盘用。
 | `com.cardash.inject.BootProvider` | ContentProvider，进程创建时自动拉起桥接 |
 | `com.cardash.inject.BridgeService` | 前台服务，跑 HTTP 服务器（`:8765`）与采集器 |
 | `com.cardash.inject.NavListenerService` | 通知监听，读音乐会话 + 解析导航通知 |
+| `com.cardash.inject.NaviAccessibilityService` | 无障碍读屏，抓导航界面上的转向/路名/距离 |
+
+无障碍服务**没有新增 XML 资源**：新增资源要重编 `resources.arsc`（apktool 那条路已经验证会挂），
+而 D.apk 自己就声明了一份无障碍配置，条件正好够用（`typeAllMask`、`canRetrieveWindowContent=true`、
+`flagRetrieveInteractiveWindows`，且**没有 `packageNames` 限制**），所以直接复用了它的资源 ID，
+注入时从原清单里现读现用，不写死。
 
 ---
 
@@ -162,10 +168,17 @@ http://192.168.x.x:8765 · 车辆信号 128 条
 
 ### 授权（读音乐和导航需要）
 
-`设置 → 应用 → 特殊权限 → 通知使用权`，勾选 **CarDash 桥接**。
+**通知使用权** —— `设置 → 应用 → 特殊权限 → 通知使用权`，勾选 **CarDash 桥接**。
+如果以前给 D.apk 的媒体功能开过，音乐可能不用再勾 —— 桥接会优先复用那个已启用的监听服务。
 
-> 如果以前给 D.apk 的媒体功能开过通知使用权，音乐可能不用再勾 —— 桥接会优先复用
-> 那个已启用的监听服务。
+**无障碍** —— **通常不用管，桥接会自己注册**。因为注入进 D.apk 后我们和桌面同 UID，
+天然持有 `WRITE_SECURE_SETTINGS`，启动时会把自己写进 `enabled_accessibility_services`
+（D.apk 自己也是这么干的）。用于读导航界面上的转向、路名、距离。
+
+- 想确认状态：看通知栏文字里有「读屏已就绪」就是成功的，或看 `/state` 里 `src.a11y`
+  （`enabled` / `auto-enabled` / `connected` 都算正常）
+- 如果显示 `need-manual`：到 `设置 → 无障碍 → 已安装的服务` 里手动打开 CarDash 桥接
+- **想关掉**：同样在无障碍列表里关掉即可，之后重启车机前不会再自动打开
 
 ### 自检
 
@@ -227,7 +240,9 @@ http://192.168.x.x:8765 · 车辆信号 128 条
 | 页面打开但字段全是 `--` | 看 `/state` 里的 `logcatError`。`logcat` 不是 `running` 就是读日志被拦了 |
 | 车速有、电量没有 | 该车型信号名不同，把 `/state` 原始 JSON 发我加进映射表 |
 | 音乐一直 `--` | 通知使用权没勾；或音源（收音机/USB）没注册 MediaSession |
-| 导航一直「暂无导航信息」 | 导航通知被折叠，或包名不在 `NaviSignals.java` 的 `NAV_PACKAGES` 里 |
+| 导航一直「暂无导航信息」 | 先看 `/state` 里 `nav.from` 是 `notify:` 还是 `a11y:`。都没有就是包名不在 `NaviSignals.java` 的 `NAV_PACKAGES` 里，补一行即可 |
+| 无障碍没自动开启 | `/state` 里 `src.a11y = need-manual`，到车机 `设置 → 无障碍` 手动勾选 |
+| 无障碍关了又被打开 | 桥接每次进程启动会重新注册。想去掉就把 `AccessibilityHelper.ensureEnabled` 那一行注释掉重新打包 |
 | IPA 装不上 | 未签名包需要先自签；免费 Apple ID 签的有效期 7 天 |
 
 ---

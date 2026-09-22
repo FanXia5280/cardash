@@ -22,8 +22,15 @@ PKG = 'com.deepalhome.launcher'
 
 RID_VERSION_CODE = 0x0101021b
 RID_VERSION_NAME = 0x0101021c
+RID_NAME = 0x01010003
+RID_RESOURCE = 0x01010025
 
 FGS_DATA_SYNC = 1  # FOREGROUND_SERVICE_TYPE_DATA_SYNC
+
+A11Y_SERVICE = 'com.cardash.inject.NaviAccessibilityService'
+A11Y_PERMISSION = 'android.permission.BIND_ACCESSIBILITY_SERVICE'
+A11Y_ACTION = 'android.accessibilityservice.AccessibilityService'
+A11Y_METADATA = 'android.accessibilityservice'
 
 
 def die(msg):
@@ -33,7 +40,34 @@ def die(msg):
 
 # ─────────────────────────────────────────── 构建要插入的组件
 
-def build_components(doc, ns):
+def find_a11y_config_res(doc):
+    """复用 D.apk 自带的无障碍配置资源。
+
+    新增 XML 资源需要重编 resources.arsc（apktool 那条路已经验证过会挂），
+    而 D.apk 自己就声明了一份无障碍配置，内容正好够用：
+        accessibilityEventTypes = typeAllMask
+        canRetrieveWindowContent = true
+        flags = flagDefault | flagRetrieveInteractiveWindows
+        （没有 packageNames 限制，能收到所有应用的窗口事件）
+    所以直接引用同一个资源 ID 即可。
+    """
+    for t in doc.tokens:
+        if t.kind != 'start' or doc.string(t.name) != 'meta-data':
+            continue
+        name_val = None
+        res_val = None
+        for a in t.attrs:
+            rid = doc.res_id(a.name)
+            if rid == RID_NAME and a.raw != NO_INDEX:
+                name_val = doc.string(a.raw)
+            elif rid == RID_RESOURCE:
+                res_val = a.data
+        if name_val == A11Y_METADATA and res_val:
+            return res_val
+    return None
+
+
+def build_components(doc, ns, a11y_res):
     def E(name):
         return doc.add_string(name)
 
@@ -45,6 +79,9 @@ def build_components(doc, ns):
 
     def I(name, value):
         return axml.make_int_attr(doc, name, value, ns)
+
+    def R(name, res_id):
+        return axml.make_ref_attr(doc, name, res_id, ns)
 
     toks = []
 
@@ -77,6 +114,23 @@ def build_components(doc, ns):
         B('exported', False),
     ]))
     toks.append(Token('end', name=E('provider')))
+
+    # 4) 无障碍服务：读屏幕上的导航信息（不放在独立进程，否则拿不到共享状态）
+    toks.append(Token('start', name=E('service'), attrs=[
+        A('name', A11Y_SERVICE),
+        B('exported', True),
+        A('permission', A11Y_PERMISSION),
+    ]))
+    toks.append(Token('start', name=E('intent-filter'), attrs=[]))
+    toks.append(Token('start', name=E('action'), attrs=[A('name', A11Y_ACTION)]))
+    toks.append(Token('end', name=E('action')))
+    toks.append(Token('end', name=E('intent-filter')))
+    toks.append(Token('start', name=E('meta-data'), attrs=[
+        A('name', A11Y_METADATA),
+        R('resource', a11y_res),
+    ]))
+    toks.append(Token('end', name=E('meta-data')))
+    toks.append(Token('end', name=E('service')))
 
     return toks
 
@@ -138,7 +192,12 @@ def patch_manifest(data, version_code=None, version_name=None):
     if ae is None:
         die('找不到 </application>')
 
-    doc.tokens[ae:ae] = build_components(doc, ns)
+    a11y_res = find_a11y_config_res(doc)
+    if a11y_res is None:
+        die('D.apk 里找不到 android.accessibilityservice 的配置资源，无法注入无障碍服务')
+    print('复用无障碍配置资源 ID = 0x%08x' % a11y_res)
+
+    doc.tokens[ae:ae] = build_components(doc, ns, a11y_res)
 
     out = axml.emit(doc)
     info = {

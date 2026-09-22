@@ -45,6 +45,8 @@ public final class StateHub {
     public volatile String navSub;
     public volatile String navDistance;
     public volatile long navUpdatedAt;
+    /** 数据来源：notify:<包名> 或 a11y:<包名> */
+    public volatile String navSource;
 
     // ── 诊断 ──
     public final Map<String, String> src = new LinkedHashMap<>();
@@ -113,6 +115,7 @@ public final class StateHub {
              .append(",\"title\":").append(Json.esc(navTitle))
              .append(",\"subtitle\":").append(Json.esc(navSub))
              .append(",\"distance\":").append(Json.esc(navDistance))
+             .append(",\"from\":").append(Json.esc(navSource))
              .append('}');
         } else {
             b.append("{\"active\":false}");

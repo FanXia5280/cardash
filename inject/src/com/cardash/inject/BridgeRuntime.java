@@ -46,6 +46,13 @@ public final class BridgeRuntime {
             // 忽略
         }
 
+        // 把自己注册进无障碍列表，用于读导航界面上的文字
+        try {
+            AccessibilityHelper.ensureEnabled(app);
+        } catch (Throwable ignored) {
+            // 忽略
+        }
+
         server = new HttpServer(PORT, new HttpServer.Handler() {
             @Override
             public String handle(String path) {

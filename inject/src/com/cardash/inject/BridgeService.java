@@ -90,6 +90,17 @@ public class BridgeService extends Service {
             sb.append(" · 等待车辆信号");
         }
 
+        String a11y = null;
+        synchronized (hub.src) {
+            a11y = hub.src.get("a11y");
+        }
+        if ("need-manual".equals(a11y)) {
+            sb.append(" · 需手动开无障碍");
+        } else if ("connected".equals(a11y) || "enabled".equals(a11y)
+                || "auto-enabled".equals(a11y)) {
+            sb.append(" · 读屏已就绪");
+        }
+
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm != null) {
             try {
