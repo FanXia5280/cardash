@@ -22,6 +22,10 @@ public final class NaviSignals {
             "com.tinnove.mediacenter",
             "com.tinnove.renderserver",
             "com.tinnove.navi",
+            // ↓ 后装高德车机版。包名是 com.wt.mahjong（不是 amapauto！），
+            //   光看名字绝对猜不到，是从用户提供的安装包清单里读出来的
+            "com.wt.mahjong",
+            "com.autonavi.amapauto",
             // ↓ 其它常见车机导航
             "com.autonavi.amapauto",
             "com.autonavi.amap",

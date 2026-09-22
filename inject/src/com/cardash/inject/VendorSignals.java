@@ -139,6 +139,9 @@ public final class VendorSignals {
             connectPs = priv(c, "connectPolymericService", boolean.class);
             registerVcarCb = priv(c, "registerVirtualCarCallbacks");
 
+            // 挂进它的实时监听器列表 —— 档位这类「只走订阅」的信号全靠这个
+            installLiveHooks();
+
             try {
                 cacheField = c.getDeclaredField("cacheCarS05Info");
                 cacheField.setAccessible(true);
@@ -171,6 +174,145 @@ public final class VendorSignals {
             Diagnostics.log("厂商通道不可用: " + t);
             return false;
         }
+    }
+
+    // ─────────────────────────────────────── 挂进 D.apk 的实时监听器
+
+    /**
+     * 关键一招：往 D.apk 自己的监听器列表里塞我们的回调。
+     *
+     * 实测 cacheCarS05Info.gearMode 是**滞后**的 —— 车机面板上「当前挡位」显示 N，
+     * 而这个字段还停在 P。说明 D.apk 的界面走的是实时订阅，缓存只是一份快照。
+     *
+     * 它的实时订阅出口就是这几个 CopyOnWriteArrayList：
+     *   onPsAliasChangedListeners   List<Function2>   (alias, value)  ← 最有价值
+     *   onInfoChangedListeners      List<Function1>   (CacheCarS05Info)
+     *   onDetailedInfoChangedListeners
+     *
+     * kotlin.jvm.functions.Function1/2 是接口，可以用动态代理实现，
+     * 不需要编译期依赖 kotlin。挂上去之后车机每推一次数据我们就收到一次。
+     */
+    private final java.util.Map<String, String> liveMap = new java.util.LinkedHashMap<>();
+    private volatile long liveEvents;
+    private static Object KOTLIN_UNIT;
+
+    private static Object kotlinUnit() {
+        if (KOTLIN_UNIT == null) {
+            try {
+                KOTLIN_UNIT = Class.forName("kotlin.Unit").getField("INSTANCE").get(null);
+            } catch (Throwable t) {
+                KOTLIN_UNIT = null;
+            }
+        }
+        return KOTLIN_UNIT;
+    }
+
+    /** 给 className 指定的接口造一个动态代理，回调里把参数交给 onLiveEvent。 */
+    private Object makeListener(String className, final String tag) {
+        try {
+            Class<?> iface = Class.forName(className, false, utilClass.getClassLoader());
+            return java.lang.reflect.Proxy.newProxyInstance(
+                    utilClass.getClassLoader(), new Class<?>[]{iface},
+                    new java.lang.reflect.InvocationHandler() {
+                        @Override public Object invoke(Object proxy, Method m, Object[] args) {
+                            try {
+                                if ("invoke".equals(m.getName()) && args != null && args.length > 0) {
+                                    onLiveEvent(tag, args);
+                                }
+                            } catch (Throwable ignored) {
+                                // 绝不能把异常抛回 D.apk 的分发循环
+                            }
+                            return kotlinUnit();
+                        }
+                    });
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 把我们的代理塞进指定的静态 List 字段。 */
+    private boolean hookList(String fieldName, String className, String tag) {
+        try {
+            Object listObj = readStatic(fieldName);
+            if (!(listObj instanceof java.util.List)) return false;
+            @SuppressWarnings("unchecked")
+            java.util.List<Object> list = (java.util.List<Object>) listObj;
+            Object listener = makeListener(className, tag);
+            if (listener == null) return false;
+            list.add(listener);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private void installLiveHooks() {
+        boolean a = hookList("onPsAliasChangedListeners",
+                "kotlin.jvm.functions.Function2", "ps");
+        boolean b = hookList("onInfoChangedListeners",
+                "kotlin.jvm.functions.Function1", "info");
+        boolean c = hookList("onDetailedInfoChangedListeners",
+                "kotlin.jvm.functions.Function2", "detail");
+        StateHub.get().setSource("hooks",
+                "ps=" + a + " info=" + b + " detail=" + c);
+        Diagnostics.log("实时挂钩: ps=" + a + " info=" + b + " detail=" + c);
+    }
+
+    /** 车机推过来的每一帧都会走到这里 */
+    private void onLiveEvent(String tag, Object[] args) {
+        liveEvents++;
+
+        // 参数通常形如 (String alias, Object value)，但不保证顺序，宽容一点
+        String alias = null;
+        Object value = null;
+        for (Object a : args) {
+            if (alias == null && a instanceof String) {
+                alias = (String) a;
+            } else if (value == null && a != null) {
+                value = a;
+            }
+        }
+
+        if (alias == null) {
+            return;
+        }
+        String text = value == null ? "null" : String.valueOf(value);
+        recordLive(alias, text);
+
+        // 复用和轮询完全相同的映射逻辑
+        try {
+            apply(StateHub.get(), alias, value);
+        } catch (Throwable ignored) {
+            // 忽略
+        }
+    }
+
+    private void recordLive(String alias, String value) {
+        if (value.length() > 80) value = value.substring(0, 80) + "…";
+        synchronized (liveMap) {
+            // 只留最近的，避免无限增长
+            if (!liveMap.containsKey(alias) && liveMap.size() >= 120) return;
+            liveMap.put(alias, value);
+        }
+    }
+
+    /** 给 /logcat 用：车机实际推过哪些别名、最后的值是什么 */
+    public String liveMapSummary() {
+        java.util.List<java.util.Map.Entry<String, String>> list;
+        synchronized (liveMap) {
+            list = new java.util.ArrayList<java.util.Map.Entry<String, String>>(liveMap.entrySet());
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("  收到实时事件: ").append(liveEvents)
+          .append(" 次，涉及别名 ").append(list.size()).append(" 个\n\n");
+        if (list.isEmpty()) {
+            sb.append("  （一个都没收到。挂钩失败或车机没在推数据，看 src.hooks）\n");
+            return sb.toString();
+        }
+        for (java.util.Map.Entry<String, String> e : list) {
+            sb.append("  ").append(e.getKey()).append(" = ").append(e.getValue()).append('\n');
+        }
+        return sb.toString();
     }
 
     /** 取一个私有方法并放开访问权限 */
@@ -404,6 +546,24 @@ public final class VendorSignals {
             hub.setSource("driveStyle", String.valueOf(raw));
             return true;
         }
+        if (A_TIRE_FL.equals(alias)) {
+            hub.setSource("tire", String.valueOf(raw));
+            return true;
+        }
+
+        // 车机自己推的导航信息。格式未知，先把原始值记进 src（/logcat 里能看到），
+        // 只有 NaviInfo 才当作转向提示用，免得被 NavMapState 之类的顶掉。
+        if (alias != null && alias.startsWith("Navigation/")) {
+            String s = String.valueOf(raw);
+            hub.setSource("nav:" + alias, s.length() > 60 ? s.substring(0, 60) : s);
+            if (alias.startsWith("Navigation/NaviInfo")) {
+                hub.navTitle = s;
+                hub.navActive = true;
+                hub.navUpdatedAt = System.currentTimeMillis();
+                hub.navSource = "vendor:" + alias;
+            }
+            return true;
+        }
         if (A_SPEED.equals(alias)) {
             Double d = num(raw);
             if (d == null || d < 0) return false;
@@ -559,6 +719,16 @@ public final class VendorSignals {
                         // 单个别名失败不影响其它
                     }
                 }
+
+                // 属性 ID 逐个取值放在最后。
+                // ⚠️ 实测 VirtualCarPropertyManager.getValue 在车机上会阻塞，
+                // 放前面会导致别名扫描永远轮不到 —— 上一版就是这么踩的坑。
+                try {
+                    idDumpText = idDump();
+                } catch (Throwable t) {
+                    idDumpText = "  采集失败: " + t;
+                }
+
                 scanRunning = false;
             }
         }, "cardash-scan");

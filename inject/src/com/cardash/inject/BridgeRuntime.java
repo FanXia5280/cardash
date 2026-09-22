@@ -370,7 +370,15 @@ public final class BridgeRuntime {
           .append(hub.navTitle == null ? "--" : hub.navTitle).append('\n');
 
         sb.append("\n【无障碍事件来源统计（用来找车机导航的真包名）】\n");
+        sb.append("  无障碍连接次数 = ").append(NaviAccessibilityService.connectCount()).append('\n');
         sb.append(NaviSignals.a11yPackageSummary());
+
+        sb.append("\n【车机实时推送（挂钩 D.apk 的监听器，档位就在这里）】\n");
+        if (vendor != null) {
+            sb.append(vendor.liveMapSummary());
+        } else {
+            sb.append("  （厂商通道未启动）\n");
+        }
 
         sb.append("\n【内容像导航但不在白名单的通知】\n");
         sb.append(NaviSignals.candidateSummary());

@@ -21,10 +21,20 @@ public class NaviAccessibilityService extends AccessibilityService {
     private static final int MAX_TEXT = 240;
     private static final int MAX_DEPTH = 26;
 
+    /** 系统绑定我们这个无障碍服务的次数。一直是 0 就说明「写设置」没真正让系统绑上。 */
+    private static final java.util.concurrent.atomic.AtomicInteger CONNECTS =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    public static int connectCount() {
+        return CONNECTS.get();
+    }
+
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        CONNECTS.incrementAndGet();
         StateHub.get().setSource("a11y", "connected");
+        Diagnostics.log("无障碍服务已连接（第 " + CONNECTS.get() + " 次）");
 
         // 在运行时把服务配置放宽，不完全依赖清单里的资源
         try {
@@ -91,6 +101,7 @@ public class NaviAccessibilityService extends AccessibilityService {
     @Override
     public boolean onUnbind(android.content.Intent intent) {
         StateHub.get().setSource("a11y", "unbound");
+        Diagnostics.log("无障碍服务被解绑");
         return super.onUnbind(intent);
     }
 

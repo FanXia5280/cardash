@@ -184,7 +184,8 @@ struct MusicPanel: View {
                 progressBar
                     .padding(.top, scale * 5)
             }
-            .frame(width: scale * 168, alignment: .leading)
+            // 自适应剩余宽度：横屏时左侧要给灵动岛让位，写死宽度会被挤爆
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
