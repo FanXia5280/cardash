@@ -39,6 +39,12 @@ public final class BridgeRuntime {
         Diagnostics.init(app);
         Diagnostics.log("BridgeRuntime.start 进入");
 
+        try {
+            NaviSignals.initPrefs(app);
+        } catch (Throwable ignored) {
+            // 附加导航包加载失败无所谓
+        }
+
         StateHub hub = StateHub.get();
         hub.setSource("server", "starting");
 
@@ -289,6 +295,10 @@ public final class BridgeRuntime {
         if ("/setfull".equals(path)) {
             // 车机不上报 SOC 百分比时，用「剩余续航 / 满电续航」折算，这里设定满电续航
             return VendorSignals.setFullRange(query);
+        }
+        if ("/setnav".equals(path)) {
+            // 知道导航包名但不想等重新打包时，直接加，立刻生效并持久化
+            return NaviSignals.addPackage(query);
         }
         if ("/log".equals(path)) {
             return Diagnostics.tail(64 * 1024);

@@ -59,11 +59,75 @@ public final class NaviSignals {
 
     private NaviSignals() { }
 
+    // ─────────────────────────────────────── 运行时可追加的导航包名
+
+    private static final String PREF = "cardash";
+    private static final String KEY_NAV = "extraNavPkgs";
+    private static volatile android.content.SharedPreferences prefs;
+    private static final java.util.Set<String> EXTRA_PKGS =
+            new java.util.concurrent.CopyOnWriteArraySet<String>();
+
+    public static void initPrefs(android.content.Context ctx) {
+        try {
+            prefs = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE);
+            String saved = prefs.getString(KEY_NAV, "");
+            if (saved != null && !saved.isEmpty()) {
+                for (String p : saved.split(",")) {
+                    if (!p.trim().isEmpty()) EXTRA_PKGS.add(p.trim());
+                }
+            }
+        } catch (Throwable ignored) {
+            // 读不到就没有附加包
+        }
+    }
+
+    /** 车机上不方便改代码但知道包名时，用 /setnav?pkg=com.xxx 直接加，立刻生效并持久化。 */
+    public static String addPackage(String query) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("导航包名白名单\n");
+        sb.append("  内置/已加: ").append(EXTRA_PKGS.isEmpty() ? "（无附加）" : EXTRA_PKGS.toString()).append('\n');
+
+        String pkg = null;
+        if (query != null) {
+            for (String kv : query.split("&")) {
+                int eq = kv.indexOf('=');
+                if (eq <= 0) continue;
+                if ("pkg".equals(kv.substring(0, eq).trim())) {
+                    pkg = kv.substring(eq + 1).trim();
+                }
+            }
+        }
+        if (pkg == null || pkg.isEmpty()) {
+            sb.append("\n  改法: ").append(BridgeRuntime.primaryUrl()).append("/setnav?pkg=com.xxx\n");
+            return sb.toString();
+        }
+
+        EXTRA_PKGS.add(pkg);
+        try {
+            android.content.SharedPreferences p = prefs;
+            if (p != null) {
+                StringBuilder all = new StringBuilder();
+                for (String s : EXTRA_PKGS) {
+                    if (all.length() > 0) all.append(',');
+                    all.append(s);
+                }
+                p.edit().putString(KEY_NAV, all.toString()).commit();
+            }
+        } catch (Throwable ignored) {
+            // 持久化失败不影响本次生效
+        }
+        sb.append("\n  已加入: ").append(pkg).append('\n');
+        sb.append("  现在去车机导航界面上划一下，再回 /logcat 看「导航」段落。\n");
+        return sb.toString();
+    }
+
     public static boolean isNavPackage(String pkg) {
         if (pkg == null) return false;
+        if (EXTRA_PKGS.contains(pkg)) return true;
         for (String p : NAV_PACKAGES) {
             if (p.equals(pkg)) return true;
         }
+        // 注意别用 contains("map") 这种宽条件 —— 会把一堆不相干的包也当成导航
         String lower = pkg.toLowerCase();
         return lower.contains("navi") || lower.contains("amap") || lower.contains("baidumap")
                 || lower.contains("tinnove");

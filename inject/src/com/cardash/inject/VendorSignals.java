@@ -259,7 +259,9 @@ public final class VendorSignals {
                     // 忽略
                 }
                 if (running && handler != null) {
-                    handler.postDelayed(this, 500L);
+                    // 250ms 读一次缓存。纯字段读取，开销可以忽略，
+                    // 但能让 iPhone 上的车速尽量贴着车机仪表走。
+                    handler.postDelayed(this, 250L);
                 }
             }
         };

@@ -299,15 +299,22 @@ final class DashboardModel: ObservableObject {
 
     // MARK: - 对外展示值
 
+    /// 车机数据的新鲜度门槛。轮询是 0.2s，1 秒内没成功就认为断了，
+    /// 这样仪表上的数字不会停留在几秒前的旧值上。
     private var carFresh: Bool {
-        Date().timeIntervalSince(lastSuccess) < 3.0
+        Date().timeIntervalSince(lastSuccess) < 1.2
     }
 
     var isCarOnline: Bool { carFresh }
 
+    /// 车速只信车机，不再退回本机 GPS。
+    ///
+    /// 车机时速和 iPhone 的 GPS 时速在高架、隧道、地库里会互相打架，
+    /// 两个数字来回跳看着很难受，所以干脆只显示车机的；车机断连时
+    /// 显示 "--" 而不是另一个来源的数字，避免误读。
     var displaySpeed: Double? {
-        if let s = car?.speed, carFresh { return s }
-        return localSpeed
+        guard carFresh, let s = car?.speed, s.isFinite, s >= 0 else { return nil }
+        return s
     }
 
     var displayAltitude: Double? {
