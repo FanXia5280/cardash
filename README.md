@@ -63,7 +63,7 @@ iPhone 上当仪表盘用。
 3. 在 `</application>` 前插入 3 个组件、改掉 `versionCode` / `versionName`；
 4. 整体重新编码，并把编译好的 `classes2.dex` 一起写进新的 zip。
 
-自检机制（CI 和本地构建都会先跑）：把原始清单解析后**原样重编**，要求逐字节一致，
+自检机制（每次本地构建都会先跑）：把原始清单解析后**原样重编**，要求逐字节一致，
 否则直接中止。实测结果 —— 写入器输出与 aapt2 编译结果**完全相同**。
 
 最终产物的改动范围：
@@ -86,55 +86,61 @@ iPhone 上当仪表盘用。
 
 ---
 
-## 四、本地构建（不依赖 GitHub）
+## 四、APK 只在本地构建
 
-先装工具链（JDK + Android build-tools + platform，约 260MB）：
+**APK 不走 GitHub。** 车机端的包在本机打，改一行信号名就能立刻重出，见下面三步。
 
-```bash
-python _tools/setup_env.py        # 见仓库外的工具目录，或参考 CI 里的下载地址
-```
-
-然后：
+### 1. 装工具链（只需一次，约 260MB）
 
 ```bash
-python tools/build_local.py D.apk <_env 目录>
+python tools/setup_env.py
 ```
 
-产物在 `dist/Deepal-CarDash.apk`。脚本流程与 GitHub Actions 完全一致，
-包含 AXML 自检、签名证书校验、改动范围校验。
+它会下载 JDK 17、Android build-tools 34、platform 34，以及 AOSP 公开的
+`platform` 签名密钥，并校验密钥 md5 是否等于车机系统签名。默认落到仓库同级的 `_env`。
+
+### 2. 构建
+
+```bash
+python tools/build_local.py <原始 D.apk 路径> <_env 目录>
+```
+
+例如：
+
+```bash
+python tools/build_local.py ..\D.apk ..\_env
+```
+
+产物在 `dist/Deepal-CarDash.apk`。
+
+### 3. 脚本都检查了什么
+
+- **AXML 写入器自检** —— 原始清单解析后原样重编必须逐字节一致，否则直接中止
+- **签名证书校验** —— 产物证书 SHA-256 必须等于车机系统签名，不等就中止
+- **改动范围校验** —— 打印新增/删除/内容变化的条目，确认只动了清单
 
 ---
 
-## 五、上传到 GitHub
+## 五、GitHub 只负责出 IPA
 
-CI 只做两件事：**出 IPA**（APK 已经能在本地构建）。
-
-需要上传的（`.github` 必须在仓库根目录）：
+仓库里需要的内容：
 
 ```
 仓库根目录/
-├── .github/workflows/
-│   ├── ios-ipa.yml            # macOS 构建 IPA
-│   └── patch-deepal-apk.yml   # 云端重新打 APK（可选）
-├── ios/                       # iPhone 工程
-├── inject/src/                # 桥接 Java 源码
-├── tools/                     # 构建脚本
-├── D.apk                      # 原始桌面包（打 APK 需要）
+├── .github/workflows/ios-ipa.yml   # 唯一的云端工作流
+├── ios/                            # iPhone 工程
+├── inject/src/                     # 桥接 Java 源码（本地构建 APK 用）
+├── tools/                          # 本地构建脚本
 └── README.md
 ```
 
-步骤：GitHub → **New repository** → 建库 →
-**Add file → Upload files** → 把上面这些东西拖进去 → Commit。
-（`.github` 是隐藏目录，Windows 资源管理器里先「查看 → 显示隐藏的项目」）
+`D.apk` 和签名密钥都不入库：前者是第三方应用，后者是密钥。
+仓库建议设成 **Private**。
 
-Actions 会自动跑：
+工作流只在 `ios/**` 或它自己被改动时触发，也可以到
+**Actions → Build iOS IPA → Run workflow** 手动重跑。
 
-| 工作流 | 产物 | 位置 |
-|---|---|---|
-| **Build iOS IPA** | `CarDash-unsigned.ipa` | Releases → `CarDash IPA build N` |
-| **Patch Deepal APK** | `Deepal-CarDash.apk` | Releases → `Deepal 仪表盘桥接 APK build N` |
-
-也可以到 **Actions → 选工作流 → Run workflow** 手动重跑。
+产物位置：**Releases → `CarDash IPA build N` → `CarDash-unsigned.ipa`**。
 
 ---
 
@@ -215,7 +221,7 @@ http://192.168.x.x:8765 · 车辆信号 128 条
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| `versionCode` 冲突装不上 | 车机上装的是更高版本，用 workflow_dispatch 的 `version_code` 输入指定更大的值 |
+| `versionCode` 冲突装不上 | 车机上装的是更高版本，用 `build_local.py` 的第 3 个参数指定更大的值 |
 | 通知栏没有「CarDash 桥接」 | 重启一次车机；或检查车机是否限制了 D.apk 的进程 |
 | `http://IP:8765/` 打不开 | 地址不对，或不在同一网段。车机开热点、手机连它 |
 | 页面打开但字段全是 `--` | 看 `/state` 里的 `logcatError`。`logcat` 不是 `running` 就是读日志被拦了 |

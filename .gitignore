@@ -23,9 +23,8 @@ apktool.jar
 # 签名密钥不入库（CI 会从 AOSP 现拉，本地由 tools/setup_env.py 下载）
 keys/
 
-# APK：只保留仓库根目录的 D.apk（注入源），其余忽略
+# APK 一律不入库（D.apk 属于第三方应用，只在本地用来构建）
 *.apk
-!/D.apk
 
 # 密钥
 *.keystore

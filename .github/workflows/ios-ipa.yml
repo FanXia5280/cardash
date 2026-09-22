@@ -3,9 +3,9 @@ name: Build iOS IPA
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - 'bridge/**'
-      - '**.md'
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-ipa.yml'
   workflow_dispatch:
 
 permissions:
