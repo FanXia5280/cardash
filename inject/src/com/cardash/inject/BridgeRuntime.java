@@ -398,6 +398,16 @@ public final class BridgeRuntime {
         sb.append("  无障碍连接次数 = ").append(NaviAccessibilityService.connectCount()).append('\n');
         sb.append(NaviSignals.a11yPackageSummary());
 
+        sb.append("\n【歌词（优先复用 D.apk 已解析好的时间线）】\n");
+        sb.append("  ").append(LauncherLyrics.describe()).append('\n');
+        sb.append("  src.lyrics = ")
+          .append(hub.src.get("lyrics") == null ? "（还没取）" : hub.src.get("lyrics"))
+          .append('\n');
+
+        sb.append("\n【车速来源判定】\n");
+        sb.append("  车机缓存车速可信 = ").append(hub.carSpeedTrusted)
+          .append("（false 时一律用高德广播的车速）\n");
+
         sb.append("\n【高德导航广播（导航数据的主力来源）】\n");
         sb.append(AmapSignals.rawSummary());
 

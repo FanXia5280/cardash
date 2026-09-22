@@ -115,8 +115,9 @@ public final class AmapSignals {
         if (remainDis >= 0) hub.navRemain = fmtDistance(remainDis);
         if (eta != null) hub.navArrive = eta;
 
-        // ── 车速兜底：车机缓存卡住时用高德的 ──
-        if (speed > 0 && (hub.speedKmh == null || hub.speedKmh <= 0)) {
+        // ── 车速：车机缓存那个字段实测会一直卡在 0（和档位一样的毛病），
+        //    所以在它证明自己是活的之前，一律用高德广播的车速。
+        if (speed >= 0 && !hub.carSpeedTrusted) {
             hub.speedKmh = (double) speed;
             hub.setSource("speed", "amap:CUR_SPEED");
         }

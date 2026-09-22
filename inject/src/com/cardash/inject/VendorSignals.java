@@ -422,6 +422,7 @@ public final class VendorSignals {
         // 1) 先读 D.apk 自己的缓存 —— 纯字段读取，绝不会阻塞，
         //    档位/车速/总里程/续航都在里面，先把保底数据拿到手。
         readCache(hub);
+        readSpeedExtras(hub);
 
         // 2) 电量百分比：车机实测不上报 EnergyInfo/SocPercent（psGetValueSync
         //    对全部 1276 个别名都返回 null），所以按用户要求用剩余续航折算。
@@ -569,6 +570,9 @@ public final class VendorSignals {
             if (d == null || d < 0) return false;
             // 别名就带 Kmh 字样，按 km/h 处理；数值明显过小才当成 m/s
             hub.speedKmh = d < 0.5 && d > 0 && isProbablyMs(raw) ? d * 3.6 : d;
+            // 这是车机主动推过来的实时值，比缓存字符串可信得多 ——
+            // 标记为可信之后就不会再被高德广播的车速覆盖
+            hub.carSpeedTrusted = true;
             hub.setSource("speed", "vendor:" + alias);
             return true;
         }
@@ -648,9 +652,20 @@ public final class VendorSignals {
 
             Double d = num(s);
             if (d == null || d < 0) return;
-            if ("speed".equals(kind) && hub.speedKmh == null) {
-                hub.speedKmh = d;
-                hub.setSource("speed", "cache:" + field);
+
+            if ("speed".equals(kind)) {
+                // 见过非 0 值才说明这个字段是活的（车在动）
+                if (d > 0) hub.carSpeedTrusted = true;
+
+                if (hub.carSpeedTrusted) {
+                    hub.speedKmh = d;
+                    hub.setSource("speed", "cache:" + field);
+                } else if (hub.speedKmh == null) {
+                    // 还什么都没有时先给个保底，免得仪表盘显示 "--"；
+                    // 高德那边一旦有值就会覆盖（见 AmapSignals）
+                    hub.speedKmh = d;
+                    hub.setSource("speed", "cache:" + field + "(未验证)");
+                }
             } else if ("odometer".equals(kind) && hub.odometerKm == null) {
                 hub.odometerKm = d;
                 hub.setSource("odometer", "cache:" + field);
@@ -791,6 +806,23 @@ public final class VendorSignals {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * 顺带读几个可能更实时的车速字段。
+     *
+     * cacheCarS05Info.speed 是个格式化过的字符串（"0 km/h"）而且是滞后快照；
+     * CarS05InfoUtil 自己还存着一个 currentDrivingSpeedKmh，是数值型、由回调直接写，
+     * 比那个字符串新鲜得多。只要它给出过非 0 值就采信。
+     */
+    private void readSpeedExtras(StateHub hub) {
+        Object v = readStatic("currentDrivingSpeedKmh");
+        if (!(v instanceof Number)) return;
+        double d = ((Number) v).doubleValue();
+        if (d <= 0) return;
+        hub.carSpeedTrusted = true;
+        hub.speedKmh = d;
+        hub.setSource("speed", "field:currentDrivingSpeedKmh");
     }
 
     private static int[] readIntArray(Class<?> c, String name) {

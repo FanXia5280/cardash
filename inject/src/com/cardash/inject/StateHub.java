@@ -51,6 +51,15 @@ public final class StateHub {
     /** 监听服务收到过多少条通知（判断监听是否真的连上） */
     public volatile long navSeen;
     public volatile boolean navActive;
+    /**
+     * 车机缓存里的车速可不可信。
+     *
+     * 实测 cacheCarS05Info 是**滞后快照**（档位就卡在 P 不动），车速同样可能
+     * 永远停在 0。所以只有在它真的给出过非 0 值之后，才认为它是活的；
+     * 在那之前一律优先采用高德广播的车速。
+     */
+    public volatile boolean carSpeedTrusted;
+
     /** 转向类型：left/right/slightLeft/slightRight/straight/uturn/round/arrive/merge，给 iPhone 画图标 */
     public volatile String navTurn;
     /** 第二个距离，例如「注意距离 191 米」 */

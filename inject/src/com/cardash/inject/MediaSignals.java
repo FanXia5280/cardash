@@ -34,6 +34,8 @@ public final class MediaSignals {
     private String lastCoverKey;
     /** 上一次查歌词的曲目标识 */
     private String lastLyricKey;
+    /** 这一首歌有没有已经发起过联网兜底（避免反复请求） */
+    private boolean lyricFetchStarted;
 
     public void start(Context context) {
         if (running) return;
@@ -218,19 +220,39 @@ public final class MediaSignals {
     }
 
     /**
-     * 歌词：只在切歌时去网上拉一次。
+     * 歌词。
      *
-     * 拉歌词是网络请求，会阻塞几百毫秒，绝不能放在这个轮询线程上，
-     * 所以丢给独立线程；拉回来时先确认还没切歌，免得把上一首的歌词贴到新歌上。
+     * 优先读 **D.apk 自己已经解析好的时间线** —— 它拉歌词、解析 LRC/TTML、
+     * 简繁转换全都做完了，我们同进程直接反射读那个 List 即可，
+     * 既不联网也保证和车机上显示的歌词一致。
+     *
+     * D.apk 那边是异步的：切歌后要过一两秒 timeline 才出现，所以这里每一轮
+     * 轮询都重试一次（反射读很便宜），读到就停。
+     *
+     * 实在读不到（比如它的歌词模块没启用）才自己去 lrclib 拉一次兜底。
      */
     private void updateLyrics(StateHub hub) {
         String title = hub.mTitle;
         String key = title + '|' + hub.mArtist;
-        if (key.equals(lastLyricKey)) return;
-        lastLyricKey = key;
 
-        hub.mLrc = null;
-        if (title == null) return;
+        if (!key.equals(lastLyricKey)) {
+            lastLyricKey = key;
+            lyricFetchStarted = false;
+            hub.mLrc = null;
+        }
+        if (title == null || hub.mLrc != null) return;
+
+        // 1) 读 D.apk 的时间线
+        String fromLauncher = LauncherLyrics.read();
+        if (fromLauncher != null) {
+            hub.mLrc = fromLauncher;
+            hub.setSource("lyrics", "launcher:" + fromLauncher.length());
+            return;
+        }
+
+        // 2) 兜底：自己去 lrclib 拉一次（网络请求，只能走独立线程）
+        if (lyricFetchStarted) return;
+        lyricFetchStarted = true;
 
         final String t = title;
         final String a = hub.mArtist;
@@ -239,6 +261,7 @@ public final class MediaSignals {
                 try {
                     String lrc = Lyrics.fetch(t, a);
                     StateHub now = StateHub.get();
+                    // 拉回来先确认还没切歌，免得把上一首的歌词贴到新歌上
                     if (lrc != null && t.equals(now.mTitle)) {
                         now.mLrc = lrc;
                     }

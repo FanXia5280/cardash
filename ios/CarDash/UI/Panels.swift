@@ -166,6 +166,9 @@ struct MusicPanel: View {
 
     /// 单击卡片在「歌手」和「两行歌词」之间切换
     @State private var showLyrics = false
+    /// 点了但没歌词时的短暂提示 —— 没有它用户分不清
+    /// 「手势没生效」和「这首歌确实没歌词」
+    @State private var noLyricHint = false
 
     private var lyricLines: [String] {
         music?.lyricLines(at: music?.position) ?? []
@@ -204,6 +207,12 @@ struct MusicPanel: View {
                         }
                     }
                     .frame(height: scale * 32, alignment: .top)
+                } else if noLyricHint {
+                    // 点了但没歌词：给个明确反馈，免得被当成「点了没反应」
+                    Text("该歌曲暂无歌词")
+                        .font(.system(size: scale * 13, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.42))
+                        .lineLimit(1)
                 } else {
                     Text(lyricHint)
                         .font(.system(size: scale * 13, weight: .regular))
@@ -222,7 +231,14 @@ struct MusicPanel: View {
         .contentShape(Rectangle())
         // 内层手势优先于外面「点任意位置开设置」，所以点音乐卡不会弹设置
         .onTapGesture {
-            if !lyricLines.isEmpty {
+            if lyricLines.isEmpty {
+                // 没歌词也要给个反馈，否则会被当成「点了没反应」
+                noLyricHint = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    noLyricHint = false
+                }
+            } else {
+                noLyricHint = false
                 showLyrics.toggle()
             }
         }
