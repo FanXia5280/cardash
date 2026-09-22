@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""本地一键构建：编译桥接代码 → 直接改写 APK 清单并注入 dex → 用平台密钥签名。
+
+与 GitHub Actions 里的步骤完全等价，方便先在本地验证再推仓库。
+
+用法:
+  python tools/build_local.py <D.apk> <_env 目录> [version_code] [version_name]
+"""
+import builtins
+import os
+import re
+import shutil
+import subprocess
+import sys
+import zipfile
+
+_real_print = builtins.print
+
+
+def _safe_print(*args, **kwargs):
+    kwargs.setdefault('flush', True)
+    try:
+        _real_print(*args, **kwargs)
+    except UnicodeEncodeError:
+        _real_print(*(str(a).encode('ascii', 'replace').decode('ascii')
+                      for a in args), **kwargs)
+
+
+builtins.print = _safe_print
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SOURCE_APK = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'D.apk')
+ENV = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
+    os.path.dirname(ROOT), '_env')
+
+# 平台签名证书的 SHA-256（与车机系统签名一致，用于自检）
+EXPECTED_CERT_SHA256 = 'c8a2e9bccf597c2fb6dc66bee293fc13f2fc47ec77bc6b2b0d52c11f51192ab8'
+
+FAILED = False
+LOG = []
+
+
+def say(text):
+    LOG.append(text)
+    print(text)
+
+
+def find_jdk(env):
+    base = os.path.join(env, 'jdk')
+    for d in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        cand = os.path.join(base, d)
+        if os.path.isfile(os.path.join(cand, 'bin', 'javac.exe')) or \
+           os.path.isfile(os.path.join(cand, 'bin', 'javac')):
+            return cand
+    return None
+
+
+def run(title, cmd, allow_fail=False, tail=8):
+    global FAILED
+    say('\n' + '=' * 62)
+    say('>>> ' + title)
+    say('=' * 62)
+    env = dict(os.environ)
+    env['PYTHONIOENCODING'] = 'utf-8'
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
+                       errors='replace', env=env, cwd=ROOT)
+    out = ((r.stdout or '') + (r.stderr or '')).rstrip()
+    if r.returncode == 0 and tail:
+        lines = [l for l in out.splitlines() if l.strip()]
+        for l in lines[-tail:]:
+            say('   ' + l)
+    elif out:
+        say(out)
+    if r.returncode != 0:
+        if allow_fail:
+            say('   （该步失败，允许继续）')
+        else:
+            FAILED = True
+            say('!!! 失败，退出码 %d' % r.returncode)
+    return r.returncode == 0, out
+
+
+def main():
+    global FAILED
+
+    jdk = find_jdk(ENV)
+    if not jdk:
+        raise SystemExit('在 %s 下找不到 JDK' % ENV)
+
+    java = os.path.join(jdk, 'bin', 'java.exe' if os.name == 'nt' else 'java')
+    javac = os.path.join(jdk, 'bin', 'javac.exe' if os.name == 'nt' else 'javac')
+
+    bt_root = os.path.join(ENV, 'build-tools')
+    bt = None
+    for d in sorted(os.listdir(bt_root)) if os.path.isdir(bt_root) else []:
+        cand = os.path.join(bt_root, d)
+        if os.path.isfile(os.path.join(cand, 'lib', 'd8.jar')):
+            bt = cand
+            break
+    if not bt:
+        raise SystemExit('找不到 build-tools')
+
+    ajar = None
+    plat_root = os.path.join(ENV, 'platform')
+    for d in sorted(os.listdir(plat_root)) if os.path.isdir(plat_root) else []:
+        cand = os.path.join(plat_root, d, 'android.jar')
+        if os.path.isfile(cand):
+            ajar = cand
+            break
+    if not ajar:
+        raise SystemExit('找不到 android.jar')
+
+    keys = os.path.join(ROOT, 'keys')
+    pk8 = os.path.join(keys, 'platform.pk8')
+    pem = os.path.join(keys, 'platform.x509.pem')
+    if not (os.path.isfile(pk8) and os.path.isfile(pem)):
+        for alt in (r'd:\Desktop\IPA\_tools', os.path.dirname(ENV)):
+            if os.path.isfile(os.path.join(alt, 'platform.pk8')):
+                keys = alt
+                pk8 = os.path.join(keys, 'platform.pk8')
+                pem = os.path.join(keys, 'platform.x509.pem')
+                break
+    if not os.path.isfile(pk8):
+        raise SystemExit('找不到 platform.pk8 / platform.x509.pem')
+
+    build = os.path.join(ROOT, 'build')
+    dist = os.path.join(ROOT, 'dist')
+    for d in ('classes', 'dex'):
+        shutil.rmtree(os.path.join(build, d), ignore_errors=True)
+    os.makedirs(os.path.join(build, 'classes'), exist_ok=True)
+    os.makedirs(os.path.join(build, 'dex'), exist_ok=True)
+    os.makedirs(dist, exist_ok=True)
+
+    say('JDK       : %s' % jdk)
+    say('android.jar: %s' % ajar)
+    say('源 APK    : %s' % SOURCE_APK)
+    say('签名密钥  : %s' % pk8)
+
+    if not os.path.isfile(SOURCE_APK):
+        raise SystemExit('找不到源 APK')
+
+    # ── 0. AXML 写入器自检：原样重编必须逐字节一致
+    ok, out = run('AXML 写入器自检', [sys.executable,
+                                     os.path.join(ROOT, 'tools', 'inject_manifest.py'),
+                                     '--roundtrip', SOURCE_APK], tail=None)
+    if not ok or 'ROUNDTRIP_OK' not in out:
+        say('!!! AXML 写入器自检未通过，中止构建')
+        sys.exit(1)
+
+    # ── 1. javac
+    srcs = []
+    for base, _, files in os.walk(os.path.join(ROOT, 'inject', 'src')):
+        for f in files:
+            if f.endswith('.java'):
+                srcs.append(os.path.join(base, f))
+    say('\n源文件 %d 个' % len(srcs))
+
+    ok, _ = run('javac 编译', [javac, '--release', '11', '-encoding', 'UTF-8',
+                              '-classpath', ajar, '-d', os.path.join(build, 'classes')] + srcs)
+    if not ok:
+        run('javac 编译（回退到默认 release）',
+            [javac, '-encoding', 'UTF-8', '-classpath', ajar,
+             '-d', os.path.join(build, 'classes')] + srcs)
+    if FAILED:
+        return
+
+    classes = []
+    for base, _, files in os.walk(os.path.join(build, 'classes')):
+        for f in files:
+            if f.endswith('.class'):
+                classes.append(os.path.join(base, f))
+
+    # ── 2. d8
+    ok, _ = run('d8 转 dex', [java, '-cp', os.path.join(bt, 'lib', 'd8.jar'),
+                             'com.android.tools.r8.D8', '--release', '--min-api', '30',
+                             '--lib', ajar, '--output', os.path.join(build, 'dex')] + classes)
+    if FAILED:
+        return
+    dex2 = os.path.join(build, 'classes2.dex')
+    os.replace(os.path.join(build, 'dex', 'classes.dex'), dex2)
+    say('   classes2.dex = %d 字节' % os.path.getsize(dex2))
+
+    # ── 3. 改写清单 + 注入 dex
+    patched = os.path.join(build, 'patched.apk')
+    cmd = [sys.executable, os.path.join(ROOT, 'tools', 'inject_manifest.py'),
+           SOURCE_APK, dex2, patched]
+    if len(sys.argv) > 3 and sys.argv[3].strip():
+        cmd.append(sys.argv[3])
+        if len(sys.argv) > 4 and sys.argv[4].strip():
+            cmd.append(sys.argv[4])
+    ok, _ = run('改写清单并注入 dex', cmd, tail=None)
+    if FAILED:
+        return
+
+    # ── 4. 对齐
+    zipalign = os.path.join(bt, 'zipalign.exe' if os.name == 'nt' else 'zipalign')
+    aligned = os.path.join(build, 'aligned.apk')
+    ok, _ = run('zipalign', [zipalign, '-f', '-p', '4', patched, aligned])
+    if FAILED:
+        return
+
+    # ── 5. 签名
+    out_apk = os.path.join(dist, 'Deepal-CarDash.apk')
+    apksigner = os.path.join(bt, 'lib', 'apksigner.jar')
+    ok, _ = run('apksigner 签名', [java, '-jar', apksigner, 'sign',
+                                   '--key', pk8, '--cert', pem,
+                                   '--min-sdk-version', '30',
+                                   '--v1-signing-enabled', 'true',
+                                   '--v2-signing-enabled', 'true',
+                                   '--v3-signing-enabled', 'true',
+                                   '--out', out_apk, aligned])
+    if FAILED:
+        return
+
+    # ── 6. 校验签名证书
+    ok, out = run('校验签名证书', [java, '-jar', apksigner, 'verify',
+                                   '--print-certs', out_apk], tail=None)
+    m = re.search(r'certificate SHA-256 digest:\s*([0-9a-f]+)', out)
+    if m:
+        got = m.group(1)
+        say('   证书 SHA-256 = %s' % got)
+        if got != EXPECTED_CERT_SHA256:
+            say('!!! 证书与车机系统签名不一致，安装会失败')
+            sys.exit(1)
+        say('   ✅ 与车机系统签名一致')
+    else:
+        say('!!! 没能读出证书指纹')
+        sys.exit(1)
+
+    # ── 7. 差异自检
+    with zipfile.ZipFile(SOURCE_APK) as a, zipfile.ZipFile(out_apk) as b:
+        na, nb = set(a.namelist()), set(b.namelist())
+        say('\n   新增条目: %s' % sorted(nb - na))
+        say('   删除条目: %s' % sorted(na - nb))
+
+    with open(os.path.join(build, 'build.log'), 'w', encoding='utf-8') as f:
+        f.write('\n'.join(LOG))
+
+    print()
+    print('=' * 62)
+    print('构建成功: %s  (%.1f MB)' % (out_apk, os.path.getsize(out_apk) / 1048576))
+
+
+if __name__ == '__main__':
+    main()

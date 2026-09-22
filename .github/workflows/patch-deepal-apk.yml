@@ -1,0 +1,200 @@
+name: Patch Deepal APK
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'inject/**'
+      - 'tools/**'
+      - 'D.apk'
+      - '.github/workflows/patch-deepal-apk.yml'
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: '自定义 versionCode（留空 = 原版本 +1）'
+        required: false
+        default: ''
+      version_name:
+        description: '自定义 versionName（留空 = 原名 +-cd）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  BUILD_TOOLS: '34.0.0'
+  ANDROID_PLATFORM: 'android-34'
+  # 车机上显示的「系统签名」md5，用来确认密钥没抓错
+  EXPECTED_KEY_MD5: '8ddb342f2da5408402d7568af21e29f9'
+  # 产物签名证书的 SHA-256，必须与车机系统签名一致
+  EXPECTED_CERT_SHA256: 'c8a2e9bccf597c2fb6dc66bee293fc13f2fc47ec77bc6b2b0d52c11f51192ab8'
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 检查 D.apk
+        run: |
+          set -euo pipefail
+          if [ ! -f D.apk ]; then
+            echo "::error::仓库根目录缺少 D.apk，请把它一起上传（见 README）"
+            exit 1
+          fi
+          ls -lh D.apk
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;${{ env.ANDROID_PLATFORM }} build-tools;${{ env.BUILD_TOOLS }}"
+
+      - name: 下载 AOSP platform 签名密钥
+        run: |
+          set -euo pipefail
+          mkdir -p keys
+          base="https://android.googlesource.com/platform/build/+/refs/heads/main/target/product/security"
+          for f in platform.pk8 platform.x509.pem; do
+            curl -sSL "$base/$f?format=TEXT" | base64 -d > "keys/$f"
+            test -s "keys/$f" || { echo "::error::下载 $f 失败"; exit 1; }
+            echo "OK  keys/$f  $(stat -c%s keys/$f) 字节"
+          done
+
+          actual=$(openssl x509 -inform PEM -in keys/platform.x509.pem -outform DER | md5sum | cut -d' ' -f1)
+          echo "证书 md5 = $actual"
+          if [ "$actual" != "${{ env.EXPECTED_KEY_MD5 }}" ]; then
+            echo "::error::密钥与车机系统签名不匹配，不要继续"
+            exit 1
+          fi
+          echo "✅ 密钥与车机系统签名一致"
+
+      - name: AXML 写入器自检
+        run: |
+          set -euo pipefail
+          python3 tools/inject_manifest.py --roundtrip D.apk
+
+      - name: 编译桥接代码为 classes2.dex
+        run: |
+          set -euo pipefail
+          AJAR="$ANDROID_HOME/platforms/${{ env.ANDROID_PLATFORM }}/android.jar"
+          BT="$ANDROID_HOME/build-tools/${{ env.BUILD_TOOLS }}"
+
+          mkdir -p build/classes build/dex dist
+          find inject/src -name '*.java' > build/sources.txt
+          echo "待编译源文件 $(wc -l < build/sources.txt) 个"
+
+          if ! javac --release 11 -encoding UTF-8 -classpath "$AJAR" \
+                 -d build/classes @build/sources.txt; then
+            echo "::warning::--release 11 失败，回退到默认 release 重新编译"
+            rm -rf build/classes && mkdir -p build/classes
+            javac -encoding UTF-8 -classpath "$AJAR" -d build/classes @build/sources.txt
+          fi
+          echo "已编译 $(find build/classes -name '*.class' | wc -l) 个 class"
+
+          find build/classes -name '*.class' > build/classes.txt
+          "$BT/d8" --release --min-api 30 --lib "$AJAR" \
+            --output build/dex @build/classes.txt
+
+          mv build/dex/classes.dex build/classes2.dex
+          echo "classes2.dex = $(stat -c%s build/classes2.dex) 字节"
+
+      - name: 改写清单并注入 dex
+        run: |
+          set -euo pipefail
+          args=(D.apk build/classes2.dex build/patched.apk)
+          if [ -n "${{ inputs.version_code }}" ]; then
+            args+=("${{ inputs.version_code }}")
+            if [ -n "${{ inputs.version_name }}" ]; then
+              args+=("${{ inputs.version_name }}")
+            fi
+          fi
+          python3 tools/inject_manifest.py "${args[@]}"
+          echo "--- 注入后的关键节点 ---"
+          python3 tools/inject_manifest.py --dump build/patched.apk \
+            | grep -E 'versionCode|versionName|sharedUserId|cardash' || true
+
+      - name: 对齐并签名
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/${{ env.BUILD_TOOLS }}"
+
+          "$BT/zipalign" -f -p 4 build/patched.apk build/aligned.apk
+
+          "$BT/apksigner" sign \
+            --key keys/platform.pk8 \
+            --cert keys/platform.x509.pem \
+            --min-sdk-version 30 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out dist/Deepal-CarDash.apk \
+            build/aligned.apk
+
+          "$BT/apksigner" verify --print-certs dist/Deepal-CarDash.apk
+
+      - name: 校验签名证书与改动范围
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/${{ env.BUILD_TOOLS }}"
+
+          sha=$("$BT/apksigner" verify --print-certs dist/Deepal-CarDash.apk \
+                | grep 'SHA-256 digest' | head -1 | awk '{print $NF}')
+          echo "产物证书 SHA-256 = $sha"
+          if [ "$sha" != "${{ env.EXPECTED_CERT_SHA256 }}" ]; then
+            echo "::error::产物签名与车机系统签名不一致，装上去会失败"
+            exit 1
+          fi
+          echo "✅ 与车机系统签名一致，可覆盖安装"
+
+          "$BT/aapt2" dump badging dist/Deepal-CarDash.apk | head -4
+
+          python3 - <<'PY'
+          import hashlib, zipfile
+          src = zipfile.ZipFile('D.apk')
+          dst = zipfile.ZipFile('dist/Deepal-CarDash.apk')
+          a, b = set(src.namelist()), set(dst.namelist())
+          print('新增条目:', sorted(b - a))
+          print('删除条目:', sorted(a - b))
+          changed = [n for n in sorted(a & b)
+                     if hashlib.md5(src.read(n)).digest() != hashlib.md5(dst.read(n)).digest()]
+          print('内容变化的条目:', changed)
+          assert 'classes.dex' in b and 'classes2.dex' in b, 'dex 不完整'
+          assert changed == ['AndroidManifest.xml', 'META-INF/MANIFEST.MF'], \
+              '改动范围超出预期: %s' % changed
+          print('✅ 改动范围符合预期（仅清单）')
+          PY
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Deepal-CarDash-apk
+          path: dist/Deepal-CarDash.apk
+          if-no-files-found: error
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: deepal-${{ github.run_number }}
+          name: Deepal 仪表盘桥接 APK build ${{ github.run_number }}
+          body: |
+            已注入 CarDash 桥接的 Deepal 桌面包。
+
+            · 使用 AOSP platform 密钥签名，与车机系统签名一致
+            · versionCode 已自动 +1，可直接覆盖安装，无需卸载、数据不丢
+            · 除 AndroidManifest.xml 外，原包 1600+ 个文件逐字节未改动
+
+            安装后：
+            1. 车机通知栏出现「CarDash 桥接运行中 http://ip:8765」，记下地址
+            2. 在「通知使用权」里勾选 CarDash
+            3. iPhone 仪表盘设置里填这个地址
+          files: dist/Deepal-CarDash.apk
+          make_latest: true

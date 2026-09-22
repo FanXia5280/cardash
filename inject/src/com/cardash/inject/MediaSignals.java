@@ -1,0 +1,167 @@
+package com.cardash.inject;
+
+import android.content.ComponentName;
+import android.content.Context;
+import android.media.MediaMetadata;
+import android.media.session.MediaController;
+import android.media.session.MediaSessionManager;
+import android.media.session.PlaybackState;
+import android.os.Handler;
+import android.os.HandlerThread;
+
+import java.util.List;
+
+/**
+ * 读取车机上正在播放的媒体。
+ *
+ * getActiveSessions 要求调用方是「已启用的通知监听器」，所以这里依次尝试：
+ *   1. 我们自己注入的 NavListenerService
+ *   2. D.apk 原有的 MusicService（用户很可能早就给它开过通知使用权）
+ */
+public final class MediaSignals {
+
+    private Context ctx;
+    private MediaSessionManager msm;
+    private HandlerThread thread;
+    private Handler handler;
+    private ComponentName[] candidates;
+    private volatile boolean running;
+    private volatile ComponentName working;
+
+    public void start(Context context) {
+        if (running) return;
+        running = true;
+
+        ctx = context.getApplicationContext() != null ? context.getApplicationContext() : context;
+        msm = (MediaSessionManager) ctx.getSystemService(Context.MEDIA_SESSION_SERVICE);
+
+        String pkg = ctx.getPackageName();
+        candidates = new ComponentName[] {
+                new ComponentName(pkg, "com.cardash.inject.NavListenerService"),
+                new ComponentName(pkg, "com.deepalhome.launcher.music.MusicService")
+        };
+
+        thread = new HandlerThread("cardash-media");
+        thread.start();
+        handler = new Handler(thread.getLooper());
+
+        Runnable poller = new Runnable() {
+            @Override
+            public void run() {
+                if (!running) return;
+                try {
+                    poll();
+                } catch (Throwable ignored) {
+                    // 忽略
+                }
+                if (running && handler != null) {
+                    handler.postDelayed(this, 600L);
+                }
+            }
+        };
+        handler.post(poller);
+    }
+
+    public void stop() {
+        running = false;
+        if (thread != null) {
+            thread.quitSafely();
+            thread = null;
+        }
+    }
+
+    private void poll() {
+        StateHub hub = StateHub.get();
+        if (msm == null) {
+            hub.mediaError = "设备无 MediaSessionManager";
+            return;
+        }
+
+        List<MediaController> sessions = null;
+        ComponentName lastError = null;
+
+        if (working != null) {
+            sessions = trySessions(working);
+        }
+        if (sessions == null) {
+            for (ComponentName cn : candidates) {
+                sessions = trySessions(cn);
+                if (sessions != null) {
+                    working = cn;
+                    break;
+                }
+                lastError = cn;
+            }
+        }
+
+        if (sessions == null) {
+            hub.mediaError = "请在设置里开启「通知使用权」（" + lastError + "）";
+            return;
+        }
+        hub.mediaError = null;
+
+        MediaController best = null;
+        for (MediaController c : sessions) {
+            PlaybackState ps = c.getPlaybackState();
+            if (ps == null) continue;
+            if (ps.getState() == PlaybackState.STATE_PLAYING) {
+                best = c;
+                break;
+            }
+            if (best == null) best = c;
+        }
+
+        if (best == null) {
+            hub.clearMusic();
+            return;
+        }
+
+        MediaMetadata md = best.getMetadata();
+        hub.mTitle = md == null ? null : first(str(md.getText(MediaMetadata.METADATA_KEY_TITLE)),
+                str(md.getText(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)));
+        hub.mArtist = md == null ? null : first(str(md.getText(MediaMetadata.METADATA_KEY_ARTIST)),
+                str(md.getText(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)),
+                str(md.getText(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)));
+        hub.mAlbum = md == null ? null : str(md.getText(MediaMetadata.METADATA_KEY_ALBUM));
+
+        PlaybackState ps = best.getPlaybackState();
+        if (ps != null) {
+            hub.mPlaying = ps.getState() == PlaybackState.STATE_PLAYING;
+            long pos = ps.getPosition();
+            hub.mPosition = pos >= 0 ? pos / 1000.0 : null;
+        } else {
+            hub.mPlaying = null;
+            hub.mPosition = null;
+        }
+
+        if (md != null && md.getLong(MediaMetadata.METADATA_KEY_DURATION) > 0) {
+            hub.mDuration = md.getLong(MediaMetadata.METADATA_KEY_DURATION) / 1000.0;
+        } else {
+            hub.mDuration = null;
+        }
+
+        hub.setSource("music", "mediasession");
+    }
+
+    private List<MediaController> trySessions(ComponentName cn) {
+        try {
+            return msm.getActiveSessions(cn);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static String first(String... values) {
+        for (String v : values) {
+            if (v != null) return v;
+        }
+        return null;
+    }
+
+    private static String str(CharSequence cs) {
+        if (cs == null) return null;
+        String s = cs.toString().trim();
+        if (s.isEmpty() || "null".equalsIgnoreCase(s)) return null;
+        return s;
+    }
+}

@@ -1,0 +1,39 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Xcode / XcodeGen
+ios/*.xcodeproj
+ios/*.xcworkspace
+ios/build/
+ios/out/
+ios/DerivedData/
+*.ipa
+*.xcuserstate
+
+# 构建中间产物
+build/
+dist/
+work/
+inject/out/
+__pycache__/
+*.pyc
+apktool.jar
+
+# 签名密钥不入库（CI 会从 AOSP 现拉，本地由 tools/setup_env.py 下载）
+keys/
+
+# APK：只保留仓库根目录的 D.apk（注入源），其余忽略
+*.apk
+!/D.apk
+
+# 密钥
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+
+# IDE
+.idea/
+.vscode/
+*.iml

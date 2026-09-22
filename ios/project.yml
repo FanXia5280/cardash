@@ -1,0 +1,49 @@
+name: CarDash
+
+options:
+  bundleIdPrefix: com.cardash
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CLANG_ENABLE_MODULES: YES
+
+schemes:
+  CarDash:
+    build:
+      targets:
+        CarDash: all
+    run:
+      config: Release
+    archive:
+      config: Release
+
+targets:
+  CarDash:
+    type: application
+    platform: iOS
+    sources:
+      - path: CarDash
+    settings:
+      base:
+        PRODUCT_NAME: CarDash
+        PRODUCT_BUNDLE_IDENTIFIER: com.cardash.dashboard
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGN_IDENTITY: ""
+        SWIFT_OPTIMIZATION_LEVEL: "-O"
+        SWIFT_COMPILATION_MODE: wholemodule
+        ENABLE_BITCODE: NO
+        DEAD_CODE_STRIPPING: YES

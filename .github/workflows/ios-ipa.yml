@@ -1,0 +1,77 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'bridge/**'
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build app (unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project CarDash.xcodeproj \
+            -scheme CarDash \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: ios
+        run: |
+          APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)
+          echo "App bundle: $APP"
+          test -n "$APP"
+          rm -rf out && mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out
+          zip -qry ../CarDash-unsigned.ipa Payload
+          ls -lh ../CarDash-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarDash-unsigned-ipa
+          path: ios/CarDash-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: CarDash IPA build ${{ github.run_number }}
+          body: |
+            未签名 IPA（unsigned），用 Sideloadly / AltStore / TrollStore 自行签名安装。
+            构建时间：${{ github.event.repository.updated_at }}
+          files: ios/CarDash-unsigned.ipa
+          make_latest: true
