@@ -33,14 +33,18 @@ A11Y_PERMISSION = 'android.permission.BIND_ACCESSIBILITY_SERVICE'
 A11Y_ACTION = 'android.accessibilityservice.AccessibilityService'
 A11Y_METADATA = 'android.accessibilityservice'
 
-# 这两个权限在 Android 11（车机）上不存在，声明了也只是被忽略；
-# 但到了 Android 13+ 就是必需的，补上顺带让模拟器能完整验证。
-#   POST_NOTIFICATIONS            —— API 33+ 发通知必须申请
-#   FOREGROUND_SERVICE_DATA_SYNC  —— API 34+ 起 dataSync 类型前台服务必须申请
-EXTRA_PERMISSIONS = [
-    'android.permission.POST_NOTIFICATIONS',
-    'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
-]
+# 刻意保持为空。踩过的坑：
+#
+# D.apk 启动时会自检权限，缺权限就弹「一键授权」向导，点「去授权」进 HelperActivity。
+# 一旦我们往清单里补声明它原本没有的权限，就可能被它的自检逻辑算成「缺失」——
+# 而 POST_NOTIFICATIONS 在 Android 11 上根本不存在，checkSelfPermission 必然返回 DENIED，
+# 也就是说在车机上会变成永远缺权限、每次启动都弹授权页。得不偿失。
+#
+# 这两个权限对 Android 11 车机本来就是多余的：
+#   通知        —— API 33 起才需要 POST_NOTIFICATIONS
+#   前台服务    —— API 34 起才需要 FOREGROUND_SERVICE_* 权限
+# 真要让桥接在 Android 13+ 上跑，应该改 D.apk 的自检逻辑，而不是硬塞权限。
+EXTRA_PERMISSIONS = []
 
 
 def die(msg):
@@ -171,7 +175,8 @@ def build_components(doc, ns, a11y_res):
 
 # ─────────────────────────────────────────── 改写清单
 
-def patch_manifest(data, version_code=None, version_name=None, drop_shared_uid=False):
+def patch_manifest(data, version_code=None, version_name=None, drop_shared_uid=False,
+                   no_inject=False):
     doc = axml.parse(data)
 
     ns = doc.index_of(NS_ANDROID)
@@ -229,6 +234,20 @@ def patch_manifest(data, version_code=None, version_name=None, drop_shared_uid=F
         else:
             print('已移除 sharedUserId（仅用于模拟器测试，勿用于车机）')
 
+    if no_inject:
+        # 对照组：只改版本号 / 去掉 sharedUserId，不注入任何东西。
+        # 用来证明模拟器上跳转「ADB 工具」页是 D.apk 自己的行为。
+        print('跳过组件与权限注入（对照组）')
+        out = axml.emit(doc)
+        info = {
+            'old_version_code': old_code,
+            'new_version_code': new_code,
+            'old_version_name': old_name,
+            'new_version_name': new_name,
+            'strings': len(doc.strings),
+        }
+        return out, info
+
     a11y_res = find_a11y_config_res(doc)
     if a11y_res is None:
         die('D.apk 里找不到 android.accessibilityservice 的配置资源，无法注入无障碍服务')
@@ -264,7 +283,7 @@ STORED = {'AndroidManifest.xml', 'resources.arsc'}
 
 
 def build_apk(src, dex_path, out, version_code, version_name, quiet=False,
-              drop_shared_uid=False):
+              drop_shared_uid=False, no_inject=False):
     if not os.path.isfile(src):
         die('找不到源 APK: ' + src)
 
@@ -277,7 +296,8 @@ def build_apk(src, dex_path, out, version_code, version_name, quiet=False,
             die('源 APK 已存在 classes2.dex，请用原始包')
 
         new_manifest, info = patch_manifest(zin.read('AndroidManifest.xml'),
-                                            version_code, version_name, drop_shared_uid)
+                                            version_code, version_name, drop_shared_uid,
+                                            no_inject)
 
         dex = None
         if dex_path and dex_path != '-':
@@ -380,7 +400,8 @@ def main():
     code = pos[3] if len(pos) > 3 and pos[3].strip() else None
     name = pos[4] if len(pos) > 4 and pos[4].strip() else None
     build_apk(src, dex, out, code, name,
-              drop_shared_uid='--no-shared-uid' in flags)
+              drop_shared_uid='--no-shared-uid' in flags,
+              no_inject='--no-inject' in flags)
 
 
 if __name__ == '__main__':
