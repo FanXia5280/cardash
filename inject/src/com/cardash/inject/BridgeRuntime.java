@@ -14,6 +14,7 @@ public final class BridgeRuntime {
     private static volatile boolean started;
     private static long startedAt;
     private static HttpServer server;
+    private static VendorSignals vendor;
     private static LogcatSignals logcat;
     private static CarSignals car;
     private static MediaSignals media;
@@ -41,6 +42,17 @@ public final class BridgeRuntime {
         StateHub hub = StateHub.get();
         hub.setSource("server", "starting");
 
+        // 主力通道：反射调用 D.apk 自带的厂商 SDK（虚拟车辆属性）
+        try {
+            vendor = new VendorSignals();
+            vendor.start(app);
+            Diagnostics.log("VendorSignals 已启动");
+        } catch (Throwable t) {
+            hub.setSource("vendor", "start-failed");
+            Diagnostics.log("VendorSignals 启动失败: " + t);
+        }
+
+        // 兼容保留：有些车型确实走 logcat，但本车实测没有
         try {
             logcat = new LogcatSignals();
             logcat.start();
@@ -244,7 +256,8 @@ public final class BridgeRuntime {
         sb.append("  logcatSeen = ").append(hub.logcatSeen)
           .append("   logcatMatched = ").append(hub.logcatMatched).append('\n');
 
-        sb.append("\n想看原始日志就打开: ").append(primaryUrl()).append("/logcat\n");
+        sb.append("\n想看 logcat 抽样打开: ").append(primaryUrl()).append("/logcat\n");
+        sb.append("想看厂商属性全量扫描: ").append(primaryUrl()).append("/scan\n");
         sb.append("想看桥接运行日志打开: ").append(primaryUrl()).append("/log\n");
 
         return sb.toString();
@@ -266,6 +279,12 @@ public final class BridgeRuntime {
         }
         if ("/logcat".equals(path)) {
             return logcatReport();
+        }
+        if (path.startsWith("/scan")) {
+            VendorSignals v = vendor;
+            return v == null
+                    ? "厂商通道未启动，先看 /diag 里的 carError"
+                    : v.scanEntry(path.indexOf("all") > 0);
         }
         if ("/log".equals(path)) {
             return Diagnostics.tail(64 * 1024);
