@@ -156,8 +156,6 @@ struct NavMapView: UIViewRepresentable {
 
     let coord: CLLocationCoordinate2D?
     let heading: Double
-    /// 路线（WGS-84）
-    let route: [CLLocationCoordinate2D]
     /// 目的地（WGS-84）
     let dest: CLLocationCoordinate2D?
     let useAmapTiles: Bool
@@ -193,7 +191,6 @@ struct NavMapView: UIViewRepresentable {
         context.coordinator.update(view: v,
                                    coord: coord,
                                    heading: heading,
-                                   route: route,
                                    dest: dest,
                                    useAmapTiles: useAmapTiles)
     }
@@ -205,8 +202,6 @@ struct NavMapView: UIViewRepresentable {
         private var drewAmap = false
         /// 上一版瓦片是深色还是浅色。日夜模式变化时要重铺一次。
         private var drewDark: Bool?
-        private var routeLine: MKPolyline?
-        private var routeCount = -1
         private var destPin: MKPointAnnotation?
         private var lastCamera: (CLLocationCoordinate2D, Double)?
         private var lastDestKey: String?
@@ -214,7 +209,6 @@ struct NavMapView: UIViewRepresentable {
         func update(view: MKMapView,
                     coord: CLLocationCoordinate2D?,
                     heading: Double,
-                    route: [CLLocationCoordinate2D],
                     dest: CLLocationCoordinate2D?,
                     useAmapTiles: Bool) {
 
@@ -251,16 +245,6 @@ struct NavMapView: UIViewRepresentable {
             }
 
             // ── 路线 ──
-            if route.count != routeCount {
-                routeCount = route.count
-                if let old = routeLine { view.removeOverlay(old); routeLine = nil }
-                if route.count >= 2 {
-                    let pts = useAmapTiles ? route.map(ChinaCoord.toGcj) : route
-                    let p = MKPolyline(coordinates: pts, count: pts.count)
-                    routeLine = p
-                    view.addOverlay(p, level: .aboveRoads)
-                }
-            }
 
             // ── 目的地标记 ──
             let dkey = dest.map { "\($0.latitude),\($0.longitude)" } ?? ""
@@ -281,14 +265,6 @@ struct NavMapView: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let t = overlay as? AmapTileOverlay {
                 return MKTileOverlayRenderer(tileOverlay: t)
-            }
-            if let p = overlay as? MKPolyline {
-                let r = MKPolylineRenderer(polyline: p)
-                r.strokeColor = UIColor(red: 0.25, green: 0.62, blue: 1.0, alpha: 0.95)
-                r.lineWidth = 9
-                r.lineCap = .round
-                r.lineJoin = .round
-                return r
             }
             return MKOverlayRenderer(overlay: overlay)
         }

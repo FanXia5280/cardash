@@ -17,7 +17,6 @@ public final class BridgeRuntime {
     private static VendorSignals vendor;
     private static LogcatSignals logcat;
     private static CarSignals car;
-    private static MediaSignals media;
     private static Thread updater;
     private static Context appCtx;
 
@@ -96,14 +95,6 @@ public final class BridgeRuntime {
         }
 
         try {
-            media = new MediaSignals();
-            media.start(app);
-            Diagnostics.log("MediaSignals 已启动");
-        } catch (Throwable t) {
-            Diagnostics.log("MediaSignals 启动失败: " + t);
-        }
-
-        try {
             AccessibilityHelper.ensureEnabled(app);
             Diagnostics.log("无障碍自注册完成: " + hub.src.get("a11y"));
         } catch (Throwable t) {
@@ -150,7 +141,6 @@ public final class BridgeRuntime {
         if (server != null) server.stop();
         if (logcat != null) logcat.stop();
         if (car != null) car.stop();
-        if (media != null) media.stop();
         started = false;
     }
 
@@ -280,7 +270,6 @@ public final class BridgeRuntime {
         sb.append("  电量   ").append(fmt(hub.soc, " %")).append('\n');
         sb.append("  续航   ").append(fmt(hub.rangeKm, " km")).append('\n');
         sb.append("  总里程 ").append(fmt(hub.odometerKm, " km")).append('\n');
-        sb.append("  音乐   ").append(hub.mTitle == null ? "--" : hub.mTitle).append('\n');
         sb.append("  导航   ").append(hub.navTitle == null ? "--" : hub.navTitle).append('\n');
 
         sb.append("\n信号来源:\n");
@@ -291,7 +280,6 @@ public final class BridgeRuntime {
         }
         if (hub.logcatError != null) sb.append("  logcatError = ").append(hub.logcatError).append('\n');
         if (hub.carError != null) sb.append("  carError = ").append(hub.carError).append('\n');
-        if (hub.mediaError != null) sb.append("  mediaError = ").append(hub.mediaError).append('\n');
         sb.append("  logcatLines = ").append(hub.logcatLines).append('\n');
         sb.append("  logcatSeen = ").append(hub.logcatSeen)
           .append("   logcatMatched = ").append(hub.logcatMatched).append('\n');
@@ -396,31 +384,6 @@ public final class BridgeRuntime {
         sb.append("  电量   ").append(hub.soc == null ? "--" : String.valueOf(hub.soc)).append('\n');
         sb.append("  续航   ").append(hub.rangeKm == null ? "--" : String.valueOf(hub.rangeKm)).append('\n');
         sb.append("  总里程 ").append(hub.odometerKm == null ? "--" : String.valueOf(hub.odometerKm)).append('\n');
-        sb.append("  封面   ").append(hub.mCover == null ? "无" : (hub.mCover.length() + " 字符")).append('\n');
-
-        sb.append("\n【目的地（自动同步路线用）】\n");
-        sb.append(DestSignals.report());
-
-        sb.append("\n【导航】\n");
-        sb.append("  listener     = ")
-          .append(hub.src.get("listener") == null ? "未连接" : hub.src.get("listener")).append('\n');
-        sb.append("  notify 权限  = ")
-          .append(hub.src.get("notify") == null ? "未知" : hub.src.get("notify")).append('\n');
-        sb.append("  a11y 状态    = ")
-          .append(hub.src.get("a11y") == null ? "未知" : hub.src.get("a11y")).append('\n');
-        sb.append("  收到通知条数 = ").append(hub.navSeen).append('\n');
-        sb.append("  当前导航     = ")
-          .append(hub.navTitle == null ? "--" : hub.navTitle).append('\n');
-
-        sb.append("\n【无障碍事件来源统计（用来找车机导航的真包名）】\n");
-        sb.append("  无障碍连接次数 = ").append(NaviAccessibilityService.connectCount()).append('\n');
-        sb.append(NaviSignals.a11yPackageSummary());
-
-        sb.append("\n【歌词（优先复用 D.apk 已解析好的时间线）】\n");
-        sb.append("  ").append(LauncherLyrics.describe()).append('\n');
-        sb.append("  src.lyrics = ")
-          .append(hub.src.get("lyrics") == null ? "（还没取）" : hub.src.get("lyrics"))
-          .append('\n');
 
         sb.append("\n【车速】\n");
         sb.append("  仪表车速  = iPhone 本机 GPS（车机车速一律不采用）\n");

@@ -82,21 +82,6 @@ public final class StateHub {
         return null;
     }
 
-    // ── 音乐 ──
-    public volatile String mTitle;
-    public volatile String mArtist;
-    public volatile String mAlbum;
-    public volatile Boolean mPlaying;
-    public volatile Double mPosition;
-    public volatile Double mDuration;
-    /** 专辑封面，base64(JPEG)。体积压到 ~10KB 以内，直接塞进 JSON 给 iPhone 用。 */
-    public volatile String mCover;
-    /**
-     * 同步歌词，紧凑格式：「起始秒|歌词」逐行、\n 连接。
-     * 只在切歌时更新一次，iPhone 按播放位置自己切行 —— 比每 200ms 推一次
-     * 「当前歌词」省得多，也能跟到几十毫秒的精度。
-     */
-    public volatile String mLrc;
 
     // ── 导航 ──
     /** 监听服务收到过多少条通知（判断监听是否真的连上） */
@@ -130,7 +115,6 @@ public final class StateHub {
     public final Map<String, String> src = new LinkedHashMap<>();
     public volatile String logcatError;
     public volatile String carError;
-    public volatile String mediaError;
 
     /** 收到过多少条车辆信号日志，用于判断链路是否活着 */
     public volatile long logcatLines;
@@ -144,17 +128,6 @@ public final class StateHub {
         synchronized (src) {
             src.put(key, value);
         }
-    }
-
-    public void clearMusic() {
-        mTitle = null;
-        mArtist = null;
-        mAlbum = null;
-        mPlaying = null;
-        mPosition = null;
-        mDuration = null;
-        mCover = null;
-        mLrc = null;
     }
 
     private boolean navFresh() {
@@ -213,22 +186,6 @@ public final class StateHub {
             b.append("null");
         }
 
-        b.append(",\"music\":");
-        if (mTitle != null || mArtist != null) {
-            b.append('{')
-             .append("\"title\":").append(Json.esc(mTitle))
-             .append(",\"artist\":").append(Json.esc(mArtist))
-             .append(",\"album\":").append(Json.esc(mAlbum))
-             .append(",\"playing\":").append(Json.bool(mPlaying))
-             .append(",\"position\":").append(Json.num(mPosition))
-             .append(",\"duration\":").append(Json.num(mDuration))
-             .append(",\"cover\":").append(Json.esc(mCover))
-             .append(",\"lrc\":").append(Json.esc(mLrc))
-             .append('}');
-        } else {
-            b.append("null");
-        }
-
         b.append(",\"nav\":");
         if (navFresh()) {
             b.append('{')
@@ -263,7 +220,6 @@ public final class StateHub {
         appendDiag(b, first, "logcatAge", logcatFresh() ? "fresh" : "stale");
         appendDiag(b, first, "logcatError", logcatError);
         appendDiag(b, first, "carError", carError);
-        appendDiag(b, first, "mediaError", mediaError);
         b.append('}');
 
         b.append('}');

@@ -56,13 +56,11 @@ struct DashboardView: View {
                     if !navStarted {
                         DashboardMapView(coord: model.coord,
                                          heading: model.heading,
-                                         route: model.route,
                                          dest: model.routeDest,
                                          amapAgreed: amapAgreed,
                                          useRasterFallback: useAmapTiles,
                                          zoom: zoom,
-                                         speed: model.displaySpeed,
-                                         segments: model.routeSegments)
+                                         speed: model.displaySpeed)
                     }
 
                     NaviKitNavView(from: model.coord, to: dest,
@@ -77,13 +75,11 @@ struct DashboardView: View {
                 // 这时候样式和导航态对不上是没办法的事（SDK 不允许未同意就创建地图）。
                 DashboardMapView(coord: model.coord,
                                  heading: model.heading,
-                                 route: model.route,
                                  dest: model.routeDest,
                                  amapAgreed: amapAgreed,
                                  useRasterFallback: useAmapTiles,
                                  zoom: zoom,
-                                 speed: model.displaySpeed,
-                                 segments: model.routeSegments)
+                                 speed: model.displaySpeed)
                     .ignoresSafeArea()
             }
 

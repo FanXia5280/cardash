@@ -26,7 +26,6 @@ struct CarSnapshot: Codable, Equatable {
     var turn: Int?
     /// 前方电子眼（车机高德引导广播）。null = 前方没有
     var camera: CameraInfo?
-    var music: MusicState?
     var nav: NavState?
     /// 各字段的来源，用于排查（vhal / none 等）
     var src: [String: String]?
@@ -51,12 +50,6 @@ struct CameraInfo: Codable, Equatable {
 /// 高德 Web API（extensions=all）的 steps[].tmcs[] 里每小段都有 status：
 /// 畅通 / 缓行 / 拥堵 / 严重拥堵 —— 用它分段着色，就是高德导航那种
 /// 「绿的路 + 红的堵点」，而不是自己猜一根蓝线。
-struct RouteSegment {
-    var points: [CLLocationCoordinate2D]
-    /// 0 畅通 / 1 缓行 / 2 拥堵 / 3 严重拥堵
-    var status: Int
-}
-
 /// 车机报上来的导航目的地
 struct Dest: Codable, Hashable {
     var name: String?
@@ -78,62 +71,6 @@ struct Dest: Codable, Hashable {
             return true
         }
         return !(name ?? "").isEmpty
-    }
-}
-
-struct MusicState: Codable, Equatable {
-    var title: String?
-    var artist: String?
-    var album: String?
-    var playing: Bool?
-    /// 当前播放位置（秒）
-    var position: Double?
-    /// 总时长（秒）
-    var duration: Double?
-    /// 专辑封面，base64 编码的 JPEG（车机端已缩到 240px）
-    var cover: String?
-    /// 同步歌词，紧凑格式：「起始秒|歌词」逐行、\n 连接
-    var lrc: String?
-
-    /// 按播放位置取出 [当前行, 下一行]。
-    ///
-    /// 歌词在本地按 position 切行，所以能跟着进度条一起往前走，
-    /// 不用等车机 200ms 推一次 —— 那样会明显慢半拍。
-    func lyricLines(at position: Double?) -> [String] {
-        guard let raw = lrc, !raw.isEmpty else { return [] }
-        let lines = parseLrc(raw)
-        guard !lines.isEmpty else { return [] }
-
-        let pos = position ?? 0
-        var idx = 0
-        for (i, item) in lines.enumerated() {
-            if item.time <= pos + 0.15 { idx = i } else { break }
-        }
-        var out: [String] = [lines[idx].text]
-        if idx + 1 < lines.count { out.append(lines[idx + 1].text) }
-        return out
-    }
-
-    private func parseLrc(_ raw: String) -> [(time: Double, text: String)] {
-        var out: [(Double, String)] = []
-        for line in raw.split(separator: "\n") {
-            guard let bar = line.firstIndex(of: "|") else { continue }
-            guard let t = Double(line[line.startIndex..<bar]) else { continue }
-            let text = String(line[line.index(after: bar)...])
-                .trimmingCharacters(in: .whitespaces)
-            if text.isEmpty { continue }
-            out.append((t, text))
-        }
-        return out
-    }
-
-    var progress: Double {
-        guard let p = position, let d = duration, d > 1 else { return 0 }
-        return min(max(p / d, 0), 1)
-    }
-
-    var isEmpty: Bool {
-        (title ?? "").isEmpty && (artist ?? "").isEmpty
     }
 }
 
