@@ -97,6 +97,9 @@ struct AMapNavView: UIViewRepresentable {
     let heading: Double
     let route: [CLLocationCoordinate2D]     // WGS-84
     let dest: CLLocationCoordinate2D?       // WGS-84
+    /// 视距（缩放级别）。高德官方 API：zoomLevel，范围 3~20。
+    /// 越大越近。16≈200米、17≈100米、18≈50米、19≈25米。
+    let zoom: Int
 
     func makeUIView(context: Context) -> MAMapView {
         // ⚠️ 顺序不能变：apiKey → 隐私合规 → 才能 new MAMapView
@@ -120,7 +123,7 @@ struct AMapNavView: UIViewRepresentable {
         v.isScrollEnabled = false
         v.isZoomEnabled = false
         v.isUserInteractionEnabled = false
-        v.zoomLevel = 16
+        v.zoomLevel = Double(zoom)
         return v
     }
 
@@ -129,7 +132,8 @@ struct AMapNavView: UIViewRepresentable {
                                    coord: coord,
                                    heading: heading,
                                    route: route,
-                                   dest: dest)
+                                   dest: dest,
+                                   zoom: zoom)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -141,12 +145,20 @@ struct AMapNavView: UIViewRepresentable {
         private var pin: MAPointAnnotation?
         private var lastKey: String?
         private var lastDestKey: String?
+        private var lastZoom: Int = -1
 
         func update(view: MAMapView,
                     coord: CLLocationCoordinate2D?,
                     heading: Double,
                     route: [CLLocationCoordinate2D],
-                    dest: CLLocationCoordinate2D?) {
+                    dest: CLLocationCoordinate2D?,
+                    zoom: Int) {
+
+            // 视距只在用户真的改动时才动，别每帧重置，否则 +/− 没效果
+            if zoom != lastZoom {
+                lastZoom = zoom
+                view.setZoomLevel(Double(zoom), animated: true)
+            }
 
             guard let raw = coord else { return }
             let c = ChinaCoord.toGcj(raw)
@@ -233,11 +245,13 @@ struct DashboardMapView: View {
     let dest: CLLocationCoordinate2D?
     let amapAgreed: Bool
     let useRasterFallback: Bool
+    let zoom: Int
 
     var body: some View {
         #if canImport(MAMapKit)
         if amapAgreed {
-            AMapNavView(coord: coord, heading: heading, route: route, dest: dest)
+            AMapNavView(coord: coord, heading: heading, route: route, dest: dest,
+                        zoom: zoom)
         } else {
             NavMapView(coord: coord, heading: heading, route: route,
                        dest: dest, useAmapTiles: useRasterFallback)

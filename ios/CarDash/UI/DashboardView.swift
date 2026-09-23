@@ -18,6 +18,8 @@ struct DashboardView: View {
     /// 所以没同意时退回栅格地图。
     @AppStorage("amapPrivacyAgreed") private var amapAgreed = false
     @AppStorage("amapPrivacyAsked") private var amapAsked = false
+    /// 视距（缩放级别），存在本地，下次打开记住。16≈200米。
+    @AppStorage("mapZoom") private var zoom = 16
     @State private var showPrivacy = false
 
     var body: some View {
@@ -32,7 +34,8 @@ struct DashboardView: View {
                                  route: model.route,
                                  dest: model.routeDest,
                                  amapAgreed: amapAgreed,
-                                 useRasterFallback: useAmapTiles)
+                                 useRasterFallback: useAmapTiles,
+                                 zoom: zoom)
                     // 地图**铺满整屏**。
                     // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
                     // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
@@ -85,6 +88,16 @@ struct DashboardView: View {
                     .padding(.top, k * 12)
                     .padding(.bottom, k * 10)
                     .frame(width: geo.size.width, height: geo.size.height)
+
+                    // ── 视距控制：贴右缘、竖直居中（高德那种 +/− 比例尺）──
+                    ZoomControl(zoom: zoom, scale: k) {
+                        zoom = min(19, zoom + 1)
+                    } onZoomOut: {
+                        zoom = max(12, zoom - 1)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .trailing)
+                    .padding(.trailing, k * 8)
 
                     // 浮出来的设置按钮
                     if showSettingsButton {
@@ -245,6 +258,67 @@ struct DashboardView: View {
     private func scaleFactor(for geo: GeometryProxy) -> CGFloat {
         let base = min(geo.size.width, geo.size.height)
         return min(max(base / 390.0, 0.62), 1.28)
+    }
+}
+
+// MARK: - 视距（缩放）控制
+
+/// 对应高德导航里那个「50米 / 100米 / 200米」的 +/− 比例尺缩放。
+/// 直接调 MAMapView.zoomLevel（高德官方 API），越大越近。
+private struct ZoomControl: View {
+    let zoom: Int
+    let scale: CGFloat
+    let onZoomIn: () -> Void
+    let onZoomOut: () -> Void
+
+    var body: some View {
+        VStack(spacing: scale * 5) {
+            ZoomStepButton(icon: "plus", scale: scale, action: onZoomIn)
+
+            Text(ZoomControl.scaleLabel(zoom))
+                .font(.system(size: scale * 11, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(.horizontal, scale * 8)
+                .padding(.vertical, scale * 3)
+                .background(Capsule().fill(Color.black.opacity(0.42)))
+
+            ZoomStepButton(icon: "minus", scale: scale, action: onZoomOut)
+        }
+        .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
+    }
+
+    /// zoomLevel → 比例尺文案。高德的尺子随 zoom 走，近似值够用。
+    static func scaleLabel(_ zoom: Int) -> String {
+        switch zoom {
+        case 12: return "5公里"
+        case 13: return "2公里"
+        case 14: return "1公里"
+        case 15: return "500米"
+        case 16: return "200米"
+        case 17: return "100米"
+        case 18: return "50米"
+        case 19: return "25米"
+        default: return "\(zoom)"
+        }
+    }
+}
+
+private struct ZoomStepButton: View {
+    let icon: String
+    let scale: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: scale * 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: scale * 36, height: scale * 36)
+                .background(Circle().fill(Color.black.opacity(0.48)))
+                .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 
