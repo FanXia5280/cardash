@@ -7,9 +7,18 @@
 #
 # 路径规划**不**用 AMapSearch —— 直接调高德的 Web 服务接口，
 # 这样 Web 平台那个 Key 用得上，pod 也少一个。
+
 platform :ios, '16.0'
 
 target 'CarDash' do
   use_frameworks!
-  pod 'AMap3DMap-NO-IDFA'
+  # 钉死大版本：'~> 11.0' 表示 >= 11.0 且 < 12.0。
+  #
+  # 为什么要钉：高德 SDK 的 Swift 接口名会随版本变（比如 showTraffic 在
+  # 头文件里 getter 写成 isShowTraffic、addOverlay/removeOverlay 在 Swift 里
+  # 重命名成 add(_:)/remove(_:)）。不钉版本的话，下次 pod install 拉到一个
+  # 新大版本，接口一改，工程就莫名挂掉。
+  #
+  # 本工程里所有 MAMapView 调用都是按 11.x 的头文件写的。
+  pod 'AMap3DMap-NO-IDFA', '~> 11.0'
 end
