@@ -1,7 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct DashboardView: View {
     @ObservedObject var model: DashboardModel
+
+    /// 路口放大图（导航 SDK 通过数据回调给图）。非 nil 时**盖在"速度"那一格**上 ——
+    /// 用户要求：只遮速度、不挡别的元素，所以它和速度表共用同一格（见 SpeedSlot）。
+    @State private var crossImage: UIImage?
 
     @State private var showSettings = false
     /// 点一下屏幕才浮出设置按钮。
@@ -40,7 +45,8 @@ struct DashboardView: View {
                 // 所以没目的地时回下面那套 MAMapView，但那边已经调成和这里同一套观感
                 // （`.naviNight` 底图 + 高德官方车标 + 同一组锚点）。
                 NaviKitNavView(from: model.coord, to: dest,
-                               simulate: model.isSimulating)
+                               simulate: model.isSimulating,
+                               onCrossImage: { crossImage = $0 })
                     .ignoresSafeArea()
             } else {
                 // 兜底：用户没同意高德 SDK 的隐私协议时，只能用栅格/苹果地图。
@@ -226,8 +232,10 @@ struct DashboardView: View {
             // ── 车速移到左边（参考图里大 P 的位置），右边整块留给地图 ──
             // 左边有黑色渐变垫底，白字压在上面读得清；
             // 右边地图通亮，路线不会被挡。
-            SpeedGauge(speed: model.displaySpeed, scale: k, align: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            SpeedSlot(image: crossImage, scale: k, align: .leading) {
+                SpeedGauge(speed: model.displaySpeed, scale: k, align: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // 转向卡（TurnCard）已按用户要求整块移除 —— 转向看车机自己的屏幕。
             // 所以这里只剩一个弹性空隙，把底栏顶到屏幕底部。
@@ -278,8 +286,10 @@ struct DashboardView: View {
             // ── 车速放靠上一点（用户要求）──
             // 上面有黑色渐变垫底；渐变到屏幕中段就淡出，
             // 下面整块是通亮的地图和导航路线，不受遮罩影响。
-            SpeedGauge(speed: model.displaySpeed, scale: k * 1.05)
-                .padding(.top, k * 4)
+            SpeedSlot(image: crossImage, scale: k) {
+                SpeedGauge(speed: model.displaySpeed, scale: k * 1.05)
+            }
+            .padding(.top, k * 4)
 
             // 转向卡已移除，这里只留一个弹性空隙（原来它前后各一个）
             Spacer(minLength: k * 16)
@@ -426,5 +436,47 @@ struct EdgeGlow: View {
         .blur(radius: 5)
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: isLeft ? .leading : .trailing)
+    }
+}
+
+// MARK: - 「速度」那一格（路口放大图会盖上来）
+
+/// 速度表 + 路口放大图**共用一格**。
+///
+/// 用户 2026-09-24 的要求：路口放大图「**只可以遮挡速度，不能遮挡其他元素**」。
+/// 做法就是让两者占同一个位置、同一个尺寸：
+/// * 图按 SDK 给的固定比例 **25:16** fit 进去（不会拉伸变形）；
+/// * 高度锁 `150*scale`，**比速度表本身（约 181*scale）矮** ⇒
+///   有没有放大图，这一格的高度都不变，**布局不抖、别的元素不挪位**；
+/// * 竖屏居中、横屏贴左（跟速度表一致），这样图就是压在速度上。
+/// 放大图收起后速度自动露出来（SDK 会回调 hide）。
+struct SpeedSlot<Content: View>: View {
+    let image: UIImage?
+    let scale: CGFloat
+    /// 和速度表的对齐方式保持一致（竖屏 .center、横屏 .leading）
+    var align: Alignment = .center
+    @ViewBuilder let gauge: () -> Content
+
+    var body: some View {
+        ZStack(alignment: align) {
+            gauge()
+
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(25.0 / 16.0, contentMode: .fit)
+                    .frame(maxHeight: 150 * scale)
+                    .background(Color(hex: 0x101418))       // 不透明：真把速度盖住
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.4), radius: 12, y: 2)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: image == nil)
+        .allowsHitTesting(false)
     }
 }

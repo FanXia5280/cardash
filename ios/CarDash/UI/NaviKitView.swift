@@ -39,6 +39,9 @@ struct NaviKitNavView: UIViewRepresentable {
     /// true = 用 SDK 的**模拟导航**（`startEmulatorNavi`）沿路线自动跑 ——
     /// 就是官方 doc 说的那种"预先了解既定路线的路况、电子眼"的效果。
     var simulate: Bool = false
+    /// 路口放大图：SDK 在数据回调里给图（比例固定 25:16），nil = 收起。
+    /// 只在实际导航中会有数据；SDK 自己判断何时显示/隐藏。
+    var onCrossImage: ((UIImage?) -> Void)? = nil
 
     func makeUIView(context: Context) -> AMapNaviDriveView {
         // Key 和隐私接口在 App 启动时已经设置过；这里再设一遍是幂等的
@@ -59,6 +62,12 @@ struct NaviKitNavView: UIViewRepresentable {
         // 和我们的仪表盘叠在一起非常乱。showUIElements=false 关掉这些
         // 控件；路线、红绿灯、电子眼、车标是地图元素，不受影响，仍然显示。
         v.showUIElements = false
+        // 路口放大图：⚠️ 这里必须设 **false**，否则拿不到图。
+        // 头文件原话：「10.0.2版本开始，自定义 View 中如果设置了 showCrossImage 为 YES，
+        // 回调中 crossImage 为 nil」—— 而它默认就是 YES。
+        // 我们要自己画（用户要求：显示在"速度"那一块，只遮速度、不挡别的元素），
+        // 所以关掉 SDK 内置显示，改成从数据回调里拿图自己摆。
+        v.showCrossImage = false
         v.showTrafficBar = false      // 右侧那条彩色光柱单独关掉
         // 比例尺也关掉（用户要求：导航自己会缩放，不需要尺子）。
         // 文档原话：showScale 只在 showUIElements = NO 时才可设 —— 正好符合。
@@ -92,6 +101,7 @@ struct NaviKitNavView: UIViewRepresentable {
             v.mapViewModeType = auto
         }
 
+        context.coordinator.onCrossImage = onCrossImage
         context.coordinator.attach(view: v)
         context.coordinator.update(naviView: v, from: from, to: to, simulate: simulate)
         return v
@@ -100,6 +110,7 @@ struct NaviKitNavView: UIViewRepresentable {
     func updateUIView(_ v: AMapNaviDriveView, context: Context) {
         // 自车图标位置随屏幕方向走（横屏靠右 / 竖屏靠下）
         context.coordinator.applyAnchor(view: v)
+        context.coordinator.onCrossImage = onCrossImage
         context.coordinator.update(naviView: v, from: from, to: to, simulate: simulate)
     }
 
@@ -122,7 +133,11 @@ struct NaviKitNavView: UIViewRepresentable {
 }
 
 final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
-                            AMapNaviDriveViewDelegate {
+                            AMapNaviDriveViewDelegate,
+                            AMapNaviDriveDataRepresentable {
+
+    /// 路口放大图有/无（SDK 给图，nil = 收起）。转发给 UI（见 DashboardView 的 SpeedSlot）。
+    var onCrossImage: ((UIImage?) -> Void)?
 
     private weak var view: AMapNaviDriveView?
     private var manager: AMapNaviDriveManager?
@@ -200,6 +215,9 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
         if manager == nil {
             m.delegate = self
             m.addDataRepresentative(naviView)
+            // 路口放大图走**数据回调**（AMapNaviDriveDataRepresentable），不在 delegate 里，
+            // 所以自己也得注册进去 —— 官方文档要求"算路之前"注册好，否则第一次进路口收不到。
+            m.addDataRepresentative(self)
             // ── 仪表盘自己不出声 ──
             // 用户明确要求：不要导航语音播报（车机自己会报）。
             // isUseInternalTTS 头文件默认就是 NO，这里显式声明一次防止版本差异；
@@ -254,6 +272,24 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
             startedMode = "gps"
             driveManager.startGPSNavi()
         }
+    }
+
+    // MARK: - 路口放大图（AMapNaviDriveDataRepresentable）
+
+    /// 该显示路口放大图了 —— SDK 直接把图画好给你（比例固定 **25:16**）。
+    ///
+    /// ⚠️ 前提是 driveView 的 `showCrossImage` 必须是 **false**
+    /// （头文件：「自定义View中如果设置了showCrossImage为YES，回调中crossImage为nil」）。
+    /// 显示/隐藏的时机由 SDK 判断，我们只管把图摆到"速度"那一格去。
+    func driveManager(_ driveManager: AMapNaviDriveManager,
+                      showCrossImage crossImage: UIImage?) {
+        guard let crossImage else { return }
+        onCrossImage?(crossImage)
+    }
+
+    /// 过了路口 / 该收起来了 —— 收图之后速度表自己会露出来。
+    func driveManagerHideCrossImage(_ driveManager: AMapNaviDriveManager) {
+        onCrossImage?(nil)
     }
 }
 #endif
