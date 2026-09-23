@@ -80,6 +80,31 @@ struct PrivacyConsentView: View {
     }
 }
 
+/// 视距相关的小工具。
+/// 放在 #if canImport(MAMapKit) **外面** —— DashboardView 也要用它，
+/// 不能和高德 SDK 绑在一起（没装 SDK 时栅格兜底也要能编译）。
+enum MapZoom {
+    static let minLevel = 12
+    static let maxLevel = 19
+
+    static func clamp(_ z: Int) -> Int { min(maxLevel, max(minLevel, z)) }
+
+    /// 自动比例的加减档（高德导航那种「快了拉远、慢了拉近」）。
+    /// ⚠️ 差值由 DashboardView 直接写回 zoom，zoom 本身就是最终档位 ——
+    /// 之前「基准+偏移」两套数打架，顶到 19 之后按 − 看不出变化，
+    /// 用户就以为按钮没反应（实测确实如此：25/50/100 都顶在 19）。
+    static func autoOffset(_ speedKmh: Double?) -> Int {
+        guard let s = speedKmh, s.isFinite else { return 0 }
+        switch s {
+        case ..<5:   return 2      // 停着/刚起步：拉近看清楚
+        case 5..<20: return 1
+        case 20..<45: return 0
+        case 45..<75: return -1
+        default:      return -2    // 上了快速路：拉远看远一点
+        }
+    }
+}
+
 // MARK: - 高德矢量地图
 
 #if canImport(MAMapKit)
@@ -96,6 +121,8 @@ struct AMapNavView: UIViewRepresentable {
     let coord: CLLocationCoordinate2D?      // WGS-84
     let heading: Double
     let route: [CLLocationCoordinate2D]     // WGS-84
+    /// 按路况分段的路线（高德 tmcs 的 status），用来画绿/黄/红
+    let segments: [RouteSegment]
     let dest: CLLocationCoordinate2D?       // WGS-84
     /// 视距（缩放级别）。高德官方 API：zoomLevel，范围 3~20。
     /// 越大越近。16≈200米、17≈100米、18≈50米、19≈25米。
@@ -134,6 +161,7 @@ struct AMapNavView: UIViewRepresentable {
                                    coord: coord,
                                    heading: heading,
                                    route: route,
+                                   segments: segments,
                                    dest: dest,
                                    zoom: zoom,
                                    speed: speed)
@@ -145,7 +173,10 @@ struct AMapNavView: UIViewRepresentable {
 
         private var line: MAPolyline?
         private var lineBorder: MAPolyline?
+        private var segLines: [MAPolyline] = []
+        private var segStatus: [Int] = []
         private var routeCount = -1
+        private var segKey = ""
         private var pin: MAPointAnnotation?
         private var lastKey: String?
         private var lastDestKey: String?
@@ -153,31 +184,20 @@ struct AMapNavView: UIViewRepresentable {
         /// 车标箭头（高德那种蓝色导航箭头），一直钉在车辆位置上
         private var carPin: MAPointAnnotation?
 
-        /// 自动比例：高德导航是「快了拉远、慢了拉近」，不是死一个倍率。
-        /// 在用户设的基准上加减一档，加起来才是最终视距。
-        static func autoZoomOffset(_ speedKmh: Double?) -> Int {
-            guard let s = speedKmh, s.isFinite else { return 0 }
-            switch s {
-            case ..<5:   return 2      // 停着/刚起步：拉近看清楚
-            case 5..<20: return 1
-            case 20..<45: return 0
-            case 45..<75: return -1
-            default:      return -2    // 上了快速路：拉远看远一点
-            }
-        }
-
         func update(view: MAMapView,
                     coord: CLLocationCoordinate2D?,
                     heading: Double,
                     route: [CLLocationCoordinate2D],
                     dest: CLLocationCoordinate2D?,
+                    segments: [RouteSegment],
                     zoom: Int,
                     speed: Double?) {
 
             // 视距 = 用户基准 + 按车速自动加减档。
             // 只有目标变了才动，别每帧重置，否则 +/− 没效果。
-            // autoZoomOffset 就定义在 Coordinator 里（Self 指向它）
-            let target = max(12, min(19, zoom + Self.autoZoomOffset(speed)))
+            // zoom 就是最终档位（自动档的差值由 DashboardView 写回），
+            // 这里只负责夹在范围内。只有目标变了才动，别每帧重置。
+            let target = MapZoom.clamp(zoom)
             if target != lastZoom {
                 lastZoom = target
                 // ⚠️ 高德这个 setZoomLevel(_:animated:) 参数是 CGFloat，
@@ -199,27 +219,47 @@ struct AMapNavView: UIViewRepresentable {
                 }
             }
 
-            if route.count != routeCount {
+            let key = "\(route.count)|\(segments.map { String($0.status) }.joined())"
+            if route.count != routeCount || key != segKey {
                 routeCount = route.count
-                for old in [line, lineBorder] { if let o = old { view.remove(o) } }
+                segKey = key
+                var olds: [MAPolyline] = [line, lineBorder].compactMap { $0 }
+                olds.append(contentsOf: segLines)
+                for o in olds { view.remove(o) }
                 line = nil
                 lineBorder = nil
+                segLines = []
+                segStatus = []
+
                 if route.count >= 2 {
                     // 高德算路返回的就是 GCJ-02，但我们内部统一存 WGS-84，
                     // 所以这里还是要转一道
                     let pts = route.map { p -> CLLocationCoordinate2D in ChinaCoord.toGcj(p) }
 
-                    // 先加白边（下层）—— 高德导航那条路就是「白底 + 蓝线」
+                    // 1) 白底（最下层）—— 高德导航那条路的白边
                     var b = pts
                     let border = MAPolyline(coordinates: &b, count: UInt(pts.count))
                     lineBorder = border
                     view.add(border)
 
-                    // 再加主路线（上层）
-                    var coords = pts
-                    let l = MAPolyline(coordinates: &coords, count: UInt(pts.count))
-                    line = l
-                    view.add(l)
+                    // 2) 按路况分段着色（绿/黄/红），高德 tmcs 的 status
+                    for seg in segments {
+                        let g = seg.points.map { p -> CLLocationCoordinate2D in ChinaCoord.toGcj(p) }
+                        guard g.count >= 2 else { continue }
+                        var c = g
+                        let l = MAPolyline(coordinates: &c, count: UInt(g.count))
+                        segLines.append(l)
+                        segStatus.append(seg.status)
+                        view.add(l)
+                    }
+
+                    // 3) 万一分段是空的（接口没给 tmcs），至少画一根主路线
+                    if segLines.isEmpty {
+                        var coords = pts
+                        let l = MAPolyline(coordinates: &coords, count: UInt(pts.count))
+                        line = l
+                        view.add(l)
+                    }
                 }
             }
 
@@ -257,13 +297,30 @@ struct AMapNavView: UIViewRepresentable {
                 // 白边
                 r?.strokeColor = UIColor(red: 0.93, green: 0.97, blue: 1.0, alpha: 0.95)
                 r?.lineWidth = 15
-            } else {
-                // 主路线：高德导航那种**带箭头的 3D 路线**（官方属性 is3DArrowLine）
-                r?.strokeColor = UIColor(red: 0.18, green: 0.58, blue: 1.0, alpha: 0.98)
+                return r
+            }
+
+            if let idx = segLines.firstIndex(where: { $0 === l }) {
+                // 高德路况配色（绿=畅通 黄=缓行 红=拥堵 暗红=严重拥堵）
+                let c: UIColor
+                switch segStatus[idx] {
+                case 1:  c = UIColor(red: 1.00, green: 0.72, blue: 0.00, alpha: 1.0)
+                case 2:  c = UIColor(red: 1.00, green: 0.38, blue: 0.16, alpha: 1.0)
+                case 3:  c = UIColor(red: 0.75, green: 0.05, blue: 0.05, alpha: 1.0)
+                default: c = UIColor(red: 0.10, green: 0.75, blue: 0.42, alpha: 1.0)
+                }
+                r?.strokeColor = c
                 r?.lineWidth = 11
                 r?.is3DArrowLine = true
-                r?.sideColor = UIColor(red: 0.10, green: 0.40, blue: 0.86, alpha: 1.0)
+                r?.sideColor = UIColor(red: 0.93, green: 0.97, blue: 1.0, alpha: 0.95)
+                return r
             }
+
+            // 兜底主路线
+            r?.strokeColor = UIColor(red: 0.18, green: 0.58, blue: 1.0, alpha: 0.98)
+            r?.lineWidth = 11
+            r?.is3DArrowLine = true
+            r?.sideColor = UIColor(red: 0.93, green: 0.97, blue: 1.0, alpha: 0.95)
             return r
         }
 
@@ -321,12 +378,13 @@ struct DashboardMapView: View {
     let useRasterFallback: Bool
     let zoom: Int
     let speed: Double?
+    let segments: [RouteSegment]
 
     var body: some View {
         #if canImport(MAMapKit)
         if amapAgreed {
             AMapNavView(coord: coord, heading: heading, route: route, dest: dest,
-                        zoom: zoom, speed: speed)
+                        segments: segments, zoom: zoom, speed: speed)
         } else {
             NavMapView(coord: coord, heading: heading, route: route,
                        dest: dest, useAmapTiles: useRasterFallback)

@@ -19,7 +19,10 @@ struct DashboardView: View {
     @AppStorage("amapPrivacyAgreed") private var amapAgreed = false
     @AppStorage("amapPrivacyAsked") private var amapAsked = false
     /// 视距（缩放级别），存在本地，下次打开记住。16≈200米。
+    /// 自动档的差值会直接写回这里，所以它始终等于地图的实际档位。
     @AppStorage("mapZoom") private var zoom = 16
+    /// 上一次的自动档，用来算差值
+    @State private var lastAutoOffset = 0
     @State private var showPrivacy = false
 
     var body: some View {
@@ -36,7 +39,8 @@ struct DashboardView: View {
                                  amapAgreed: amapAgreed,
                                  useRasterFallback: useAmapTiles,
                                  zoom: zoom,
-                                 speed: model.displaySpeed)
+                                 speed: model.displaySpeed,
+                                 segments: model.routeSegments)
                     // 地图**铺满整屏**。
                     // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
                     // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
@@ -130,6 +134,15 @@ struct DashboardView: View {
         .onAppear {
             // 第一次启动问一次。同意才启用高德矢量地图。
             if !amapAsked { showPrivacy = true }
+            lastAutoOffset = MapZoom.autoOffset(model.displaySpeed)
+        }
+        .onChange(of: MapZoom.autoOffset(model.displaySpeed)) { newOff in
+            // 车速换了档（比如从怠速提到快速路），把差值写进 zoom。
+            // 这样底栏 +/− 每次点击都恰好变化一档，地图和数字永远一致。
+            if newOff != lastAutoOffset {
+                zoom = MapZoom.clamp(zoom + (newOff - lastAutoOffset))
+                lastAutoOffset = newOff
+            }
         }
     }
 

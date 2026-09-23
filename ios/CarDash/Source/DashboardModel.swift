@@ -25,6 +25,8 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var heading: Double = 0
     /// 去目的地的路线（WGS-84）。车机报上来目的地后自动算。
     @Published private(set) var route: [CLLocationCoordinate2D] = []
+    /// 按路况分段的路线（和高德一路，用来画绿/黄/红）
+    @Published private(set) var routeSegments: [RouteSegment] = []
     /// 目的地坐标（WGS-84）
     @Published private(set) var routeDest: CLLocationCoordinate2D?
     /// 已经算过路线的那份目的地，用来去重
@@ -128,9 +130,15 @@ final class DashboardModel: ObservableObject {
         sensors.onFix = { [weak self] loc in
             guard let self else { return }
             self.coord = loc.coordinate
-            // course 只有在移动时才有效（静止时是 -1），
-            // 无效就保持上一次的车头方向，免得地图乱转
-            if loc.course >= 0 { self.heading = loc.course }
+            if loc.course >= 0, loc.speed > 1.0 {
+                // 移动中：GPS 航向最可靠（罗盘在车里会被车身磁场带偏）
+                self.heading = loc.course
+            } else if let b = routeBearing(at: loc.coordinate) {
+                // 停着的时候 course 无效 —— 高德的做法是把车头对齐
+                // 路线的前进方向，这样车标和路线永远一致，
+                // 「车头朝上 / 朝前」在停车时也成立
+                self.heading = b
+            }
 
             // 目的地来自车机快照，快照更新时才算路（见 poll），
             // 这里只更新车辆位置
@@ -397,8 +405,9 @@ final class DashboardModel: ObservableObject {
     private func replanRoute() {
         // 测试按钮塞的假目的地优先；清掉就回落到车机真实数据
         guard let dest = mockDest ?? car?.dest else {
-            if !route.isEmpty || routeDest != nil {
+            if !route.isEmpty || routeDest != nil || !routeSegments.isEmpty {
                 route = []
+                routeSegments = []
                 routeDest = nil
                 routedKey = nil
             }
@@ -414,18 +423,19 @@ final class DashboardModel: ObservableObject {
             guard let self, let to else { return }
 
             // 先走高德算路：和车机同源，路线能对得上
-            self.amapRoute(from: from, to: to) { pts in
-                if let pts {
-                    DispatchQueue.main.async {
+            self.amapRoute(from: from, to: to) { pts, segs in
+                DispatchQueue.main.async {
+                    if let pts {
                         self.route = pts
+                        self.routeSegments = segs ?? [RouteSegment(points: pts, status: 0)]
                         self.routeDest = to
+                        return
                     }
-                    return
-                }
-                // 高德不通（没网 / 配额用尽 / Key 不对）再退回系统算路
-                self.appleRoute(from: from, to: to) { pts in
-                    DispatchQueue.main.async {
-                        self.route = pts ?? []
+                    // 高德不通（没网 / 配额用尽 / Key 不对）再退回系统算路
+                    self.appleRoute(from: from, to: to) { p2 in
+                        self.route = p2 ?? []
+                        self.routeSegments = (p2?.count ?? 0) >= 2
+                            ? [RouteSegment(points: p2!, status: 0)] : []
                         self.routeDest = to
                     }
                 }
@@ -440,7 +450,7 @@ final class DashboardModel: ObservableObject {
     /// 返回的 polyline 是 GCJ-02，我们内部统一存 WGS-84，所以转一道。
     private func amapRoute(from: CLLocationCoordinate2D,
                            to: CLLocationCoordinate2D,
-                           done: @escaping ([CLLocationCoordinate2D]?) -> Void) {
+                           done: @escaping ([CLLocationCoordinate2D]?, [RouteSegment]?) -> Void) {
         let o = ChinaCoord.toGcj(from)
         let d = ChinaCoord.toGcj(to)
         var comp = URLComponents(string: "https://restapi.amap.com/v3/direction/driving")!
@@ -464,19 +474,48 @@ final class DashboardModel: ObservableObject {
                 done(nil)
                 return
             }
-            var wgs: [CLLocationCoordinate2D] = []
+            // 高德在 extensions=all 时会给 steps[].tmcs[]，
+            // 每一小段都有自己的 polyline 和 status（畅通/缓行/拥堵/严重拥堵）。
+            // 有就用它分段，没有（老接口/被限流）就整段当畅通。
+            var segs: [RouteSegment] = []
             for s in steps {
-                guard let pl = s["polyline"] as? String else { continue }
-                for pair in pl.split(separator: ";") {
-                    let xy = pair.split(separator: ",")
-                    guard xy.count == 2,
-                          let lon = Double(xy[0]), let lat = Double(xy[1]) else { continue }
-                    wgs.append(ChinaCoord.toWgs(
-                        CLLocationCoordinate2D(latitude: lat, longitude: lon)))
+                let tmcs = s["tmcs"] as? [[String: Any]]
+                if let tmcs, !tmcs.isEmpty {
+                    for t in tmcs {
+                        guard let pl = t["polyline"] as? String else { continue }
+                        let pts = Self.parsePolyline(pl)
+                        guard !pts.isEmpty else { continue }
+                        segs.append(RouteSegment(points: pts,
+                                                 status: Self.statusIndex(t["status"] as? String)))
+                    }
+                } else if let pl = s["polyline"] as? String {
+                    let pts = Self.parsePolyline(pl)
+                    if !pts.isEmpty { segs.append(RouteSegment(points: pts, status: 0)) }
                 }
             }
-            done(wgs.isEmpty ? nil : wgs)
+            let wgs = segs.flatMap { $0.points }
+            done(wgs.isEmpty ? nil : wgs, segs.isEmpty ? nil : segs)
         }.resume()
+    }
+
+    private static func parsePolyline(_ s: String) -> [CLLocationCoordinate2D] {
+        var out: [CLLocationCoordinate2D] = []
+        for pair in s.split(separator: ";") {
+            let xy = pair.split(separator: ",")
+            guard xy.count == 2,
+                  let lon = Double(xy[0]), let lat = Double(xy[1]) else { continue }
+            out.append(ChinaCoord.toWgs(CLLocationCoordinate2D(latitude: lat, longitude: lon)))
+        }
+        return out
+    }
+
+    private static func statusIndex(_ s: String?) -> Int {
+        switch s {
+        case "缓行": return 1
+        case "拥堵": return 2
+        case "严重拥堵": return 3
+        default: return 0      // 畅通 / 高德没给
+        }
     }
 
     /// 系统算路（兜底）
@@ -498,6 +537,35 @@ final class DashboardModel: ObservableObject {
                 done(pts)
             }
         }
+    }
+
+    /// 车辆位置附近那段路线的前进方向（度，顺时针从北起）。
+    /// 找离车最近的路线点，取它到下一点的方向；在末尾就取前一点到它的方向。
+    private func routeBearing(at c: CLLocationCoordinate2D) -> Double? {
+        guard route.count >= 2 else { return nil }
+        let here = CLLocation(latitude: c.latitude, longitude: c.longitude)
+        var best = 0
+        var bestD = Double.greatestFiniteMagnitude
+        for (i, p) in route.enumerated() {
+            let d = here.distance(from: CLLocation(latitude: p.latitude,
+                                                   longitude: p.longitude))
+            if d < bestD { bestD = d; best = i }
+        }
+        if best + 1 < route.count {
+            return Self.bearing(route[best], route[best + 1])
+        }
+        guard best >= 1 else { return nil }
+        return Self.bearing(route[best - 1], route[best])
+    }
+
+    /// 两点间的方位角（度，顺时针从北起，和高德/GPS course 同一约定）
+    private static func bearing(_ a: CLLocationCoordinate2D,
+                                _ b: CLLocationCoordinate2D) -> Double {
+        let f1 = a.latitude * .pi / 180, f2 = b.latitude * .pi / 180
+        let dl = (b.longitude - a.longitude) * .pi / 180
+        let y = sin(dl) * cos(f2)
+        let x = cos(f1) * sin(f2) - sin(f1) * cos(f2) * cos(dl)
+        return ((atan2(y, x) * 180 / .pi) + 360).truncatingRemainder(dividingBy: 360)
     }
 
     // MARK: - 测试：模拟车机报目的地
