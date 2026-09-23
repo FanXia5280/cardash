@@ -99,15 +99,23 @@ struct NavState: Codable, Equatable {
     /// 转向图标（SF Symbol）。认不出来时退回直行箭头。
     var symbolName: String {
         switch turn ?? "" {
+        case "straight": return "arrow.up"
         case "left": return "arrow.turn.up.left"
         case "slightLeft": return "arrow.up.left"
+        case "keepLeft": return "arrow.up.left"
         case "right": return "arrow.turn.up.right"
         case "slightRight": return "arrow.up.right"
+        case "keepRight": return "arrow.up.right"
         case "uturn": return "arrow.uturn.left"
+        case "leftUturn": return "arrow.uturn.left"
+        case "rightUturn": return "arrow.uturn.right"
         case "round": return "arrow.triangle.turn.up.right.circle"
         case "merge": return "arrow.merge"
         case "arrive": return "flag.checkered"
-        default: return "arrow.up"
+        case "": return "arrow.up"
+        // 认不出的转向：显示问号箭头，别假装是直行 ——
+        // 之前一直显示直线箭头就是因为「认不出」被当成了「直行」。
+        default: return "questionmark"
         }
     }
 }

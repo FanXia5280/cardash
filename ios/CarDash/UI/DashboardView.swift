@@ -3,10 +3,7 @@ import SwiftUI
 struct DashboardView: View {
     @ObservedObject var model: DashboardModel
 
-    @State private var now = Date()
     @State private var showSettings = false
-
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -23,27 +20,34 @@ struct DashboardView: View {
                 ZStack {
                     VStack(spacing: 0) {
                         // ── 顶栏：左上日期时间 / 中间导航摘要 / 右上海拔 ──
-                        HStack(alignment: .top) {
-                            ClockPanel(now: now, scale: k)
-                            Spacer(minLength: 10)
+                        // 用 ZStack 让中间那块**真正落在屏幕正中**。
+                        // 原来用 HStack + 两侧 Spacer：左右两块宽度本来就不一样，
+                        // Spacer 撑出来的「中间」会偏，看着就没居中。
+                        ZStack {
+                            ClockPanel(scale: k)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
                             NavSummaryPanel(nav: model.displayNav, scale: k)
                                 .padding(.top, k * 4)
-                            Spacer(minLength: 10)
+
                             AltitudePanel(altitude: model.displayAltitude, scale: k)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
                         }
 
                         Spacer(minLength: 8)
 
                         // ── 主区：左音乐 / 中车速 / 右导航 ──
                         HStack(alignment: .center, spacing: 0) {
+                            // 左右两块必须**等宽**，中间的车速表才会落在屏幕正中。
+                            // 之前左边 0.26、右边 0.31，车速表被挤得偏左。
                             MusicPanel(music: model.displayMusic, scale: k)
-                                .frame(width: geo.size.width * 0.26, alignment: .leading)
+                                .frame(width: geo.size.width * 0.30, alignment: .leading)
 
                             SpeedGauge(speed: model.displaySpeed, scale: k)
                                 .frame(maxWidth: .infinity)
 
                             NavigationPanel(nav: model.displayNav, scale: k)
-                                .frame(width: geo.size.width * 0.31, alignment: .trailing)
+                                .frame(width: geo.size.width * 0.30, alignment: .trailing)
                         }
 
                         Spacer(minLength: 8)
@@ -74,7 +78,6 @@ struct DashboardView: View {
                 .onTapGesture { showSettings = true }
             }
         }
-        .onReceive(ticker) { now = $0 }
         .sheet(isPresented: $showSettings) {
             SettingsSheet(model: model)
         }

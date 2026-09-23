@@ -416,6 +416,8 @@ public final class BridgeRuntime {
 
         sb.append("\n【高德导航广播（导航数据的主力来源）】\n");
         sb.append(AmapSignals.rawSummary());
+        sb.append('\n').append(AmapSignals.extrasAll());
+        sb.append('\n').append(AmapSignals.iconCalibration());
 
         sb.append("\n【车机实时推送（挂钩 D.apk 的监听器，档位就在这里）】\n");
         if (vendor != null) {

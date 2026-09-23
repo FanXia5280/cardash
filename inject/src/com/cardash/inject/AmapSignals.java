@@ -43,6 +43,8 @@ public final class AmapSignals {
     private static volatile int mode;
     private static volatile long lastGuideAt;
     private static volatile String lastRaw = "";
+    /** 最近一条引导广播，用来在 /logcat 里原样 dump 全部 extras */
+    private static volatile Intent lastIntent;
 
     private static final BroadcastReceiver RECEIVER = new BroadcastReceiver() {
         @Override
@@ -82,33 +84,51 @@ public final class AmapSignals {
     private static void onGuide(Intent i) {
         StateHub hub = StateHub.get();
 
-        int sapaDist   = i.getIntExtra("SAPA_DIST", -1);
-        int sapaType   = i.getIntExtra("SAPA_TYPE", -1);
-        int remainDis  = i.getIntExtra("ROUTE_REMAIN_DIS", -1);
-        int remainTime = i.getIntExtra("ROUTE_REMAIN_TIME", -1);
-        int speed      = i.getIntExtra("CUR_SPEED", -1);
-        int limit      = i.getIntExtra("LIMITED_SPEED", -1);
-        int lights     = i.getIntExtra("routeRemainTrafficLightNum", -1);
+        // 高德的 key 名字在不同版本里不一致（EXTRA_ 前缀的有无），
+        // 所以每个字段都按候选表依次取，第一个有值的算数。
+        int dist       = pickInt(i, -1, "EXTRA_DISTANCE", "DISTANCE", "SAPA_DIST");
+        int icon       = pickInt(i, -1, "EXTRA_ICON", "ICON", "SAPA_TYPE");
+        int remainDis  = pickInt(i, -1, "EXTRA_ROUTE_REMAIN_DIS", "ROUTE_REMAIN_DIS");
+        int remainTime = pickInt(i, -1, "EXTRA_ROUTE_REMAIN_TIME", "ROUTE_REMAIN_TIME");
+        int speed      = pickInt(i, -1, "EXTRA_CUR_SPEED", "CUR_SPEED");
+        int limit      = pickInt(i, -1, "EXTRA_LIMIT_SPEED", "LIMITED_SPEED", "EXTRA_LIMITED_SPEED");
+        int lights     = pickInt(i, -1, "EXTRA_TRAFFIC_LIGHT_NUM", "routeRemainTrafficLightNum");
 
-        String eta      = str(i.getStringExtra("ETA_TEXT"));
-        String road     = str(i.getStringExtra("CUR_ROAD_NAME"));
-        String nextRoad = str(i.getStringExtra("NEXT_ROAD_NAME"));
+        String eta     = pickStr(i, "EXTRA_ETA_TEXT", "ETA_TEXT");
+        String curRoad = pickStr(i, "EXTRA_ROAD_NAME", "CUR_ROAD_NAME");
+        String nextRoad = pickStr(i, "EXTRA_NEXT_ROAD_NAME", "NEXT_ROAD_NAME");
 
         lastGuideAt = System.currentTimeMillis();
-        lastRaw = "dist=" + sapaDist + " type=" + sapaType + " remain=" + remainDis
-                + " time=" + remainTime + " road=" + road + " limit=" + limit;
+        lastRaw = "dist=" + dist + " icon=" + icon + " remain=" + remainDis
+                + " time=" + remainTime + " cur=" + curRoad + " next=" + nextRoad
+                + " limit=" + limit;
 
-        // ── 导航卡片：转向距离 / 路名 / 第二个距离 ──
-        if (sapaDist >= 0) hub.navDistance = fmtDistance(sapaDist);
-        if (road != null) hub.navSub = road;
-        if (nextRoad != null) hub.navAfter = nextRoad;
+        // ── 导航卡片：转向距离 + 「进入 XX 路」 ──
+        // 车机上高德卡片写的是「↑ 24米 进入 天高路」，其中「天高路」是
+        // **转向之后进入**的路，对应 NEXT_ROAD_NAME；
+        // ROAD_NAME 是当前所在道路，放第二行。
+        if (dist >= 0) hub.navDistance = fmtDistance(dist);
+        if (nextRoad != null) {
+            hub.navSub = nextRoad;
+        } else if (curRoad != null) {
+            hub.navSub = curRoad;
+        }
+        if (curRoad != null && !curRoad.equals(hub.navSub)) hub.navAfter = curRoad;
 
-        // 转向类型。SAPA_TYPE 高德没公开，这里按常见取值猜，
-        // 猜不出来就用路名兜底，原始值记进 src 方便校准。
-        String turn = turnOfType(sapaType);
-        if (turn == null) turn = NaviSignals.turnOfText(road);
-        if (turn != null) hub.navTurn = turn;
-        hub.setSource("amapType", String.valueOf(sapaType));
+        // ── 转向图标 ──
+        String turn = turnOfIcon(icon);
+        if (turn != null) {
+            hub.navTurn = turn;
+        } else if (icon >= 0) {
+            // 认不出的图标编号：记下来，别偷偷当成直行
+            hub.setSource("amapIconUnknown", String.valueOf(icon));
+        }
+        hub.setSource("amapIcon", String.valueOf(icon));
+
+        // 每次引导都记一条，凑够一趟车就能对着实际路况校准图标表
+        if (icon >= 0 || dist >= 0) {
+            recordIcon(icon, dist, nextRoad != null ? nextRoad : curRoad);
+        }
 
         // ── 顶栏中间：还有多久 / 还有多远 ──
         if (remainTime >= 0) hub.navEta = fmtDuration(remainTime);
@@ -159,23 +179,141 @@ public final class AmapSignals {
                 + "\n  最后一条 = " + lastRaw + "\n";
     }
 
-    // ─────────────────────────────────────── 工具
+    /** 给 /logcat 用：图标校准表 */
+    public static String iconCalibration() {
+        return "【高德转向图标校准（开一趟车对着实际转弯看）】\n" + iconLogText();
+    }
 
-    /** SAPA_TYPE → 转向类型。高德没公开这个枚举，猜不出来时由调用方用路名兜底。 */
-    private static String turnOfType(int t) {
+    /** 给 /logcat 用：最近一条引导广播的全部 extras */
+    public static String extrasAll() {
+        return "【最近一条引导广播的全部 extras】\n" + extrasDump();
+    }
+
+    // ─────────────────────────────────────── 转向图标
+
+    private static final int ICON_LOG_MAX = 30;
+    private static final java.util.ArrayDeque<String> ICON_LOG =
+            new java.util.ArrayDeque<>();
+
+    /**
+     * 记一条 (图标编号, 距离, 路名)。
+     *
+     * 为什么要有这个：高德**没有公开** EXTRA_ICON 的枚举，社区流传的版本
+     * 还互相矛盾（有的资料说 2=左转，另一些说 2=右转）。与其猜，
+     * 不如把每次收到的原始值都记下来 —— 开一趟车，在 /logcat 里
+     * 对着实际转弯方向一看就知道哪个编号是什么，然后再校准。
+     */
+    private static void recordIcon(int icon, int dist, String road) {
+        String line = "icon=" + (icon < 0 ? "?" : String.valueOf(icon))
+                + "  " + (dist < 0 ? "?" : dist + "米")
+                + "  " + (road == null ? "-" : road);
+        synchronized (ICON_LOG) {
+            if (!line.equals(ICON_LOG.peekLast())) {      // 去掉连续重复
+                ICON_LOG.addLast(line);
+                while (ICON_LOG.size() > ICON_LOG_MAX) ICON_LOG.pollFirst();
+            }
+        }
+    }
+
+    /** 给 /logcat 用 */
+    public static String iconLogText() {
+        synchronized (ICON_LOG) {
+            if (ICON_LOG.isEmpty()) return "  （还没收到引导信息）\n";
+            StringBuilder sb = new StringBuilder();
+            for (String s : ICON_LOG) sb.append("  ").append(s).append('\n');
+            return sb.toString();
+        }
+    }
+
+    /**
+     * 高德转向图标编号 → 转向类型。
+     *
+     * ⚠️ 这是**待校准**的映射（见 recordIcon 的说明）。
+     * 认不出来时返回 null，调用方会保持上一次的箭头并且记进诊断，
+     * 不会偷偷显示成直行 —— 那正是之前「一直显示直线箭头」的原因。
+     */
+    private static String turnOfIcon(int t) {
         switch (t) {
-            case 1: return "left";
-            case 2: return "right";
-            case 3: return "slightLeft";
-            case 4: return "slightRight";
-            case 7: return "straight";
-            case 8: return "left";
-            case 9: return "right";
-            case 10: return "uturn";
-            case 11: return "round";
-            case 12: return "arrive";
+            case 1:  return "straight";
+            case 2:  return "left";
+            case 3:  return "right";
+            case 4:  return "slightLeft";
+            case 5:  return "slightRight";
+            case 6:  return "leftUturn";
+            case 7:  return "rightUturn";
+            case 8:  return "uturn";
+            case 9:  return "keepLeft";
+            case 10: return "keepRight";
+            case 11: return "slightLeft";
+            case 12: return "slightRight";
+            case 13: return "round";
+            case 14: return "arrive";
             default: return null;
         }
+    }
+
+    // ─────────────────────────────────────── 工具
+
+    /**
+     * 按候选 key 依次取一个整数。
+     *
+     * ⚠️ 不能直接用 getIntExtra：高德有的版本把数值发成 Double/String，
+     * getIntExtra 会抛 ClassCastException，hasExtra 却是 true ——
+     * 结果这个字段就整个丢了。所以统一取出 Object 再自己转。
+     */
+    private static int pickInt(Intent i, int def, String... keys) {
+        for (String k : keys) {
+            try {
+                if (!i.hasExtra(k)) continue;
+                Object v = i.getExtras() == null ? null : i.getExtras().get(k);
+                if (v instanceof Number) return ((Number) v).intValue();
+                if (v instanceof String) {
+                    String s = ((String) v).trim();
+                    if (!s.isEmpty()) return (int) Double.parseDouble(s);
+                }
+            } catch (Throwable ignored) {
+                // 这个 key 取不出来就试下一个
+            }
+        }
+        return def;
+    }
+
+    private static String pickStr(Intent i, String... keys) {
+        for (String k : keys) {
+            try {
+                if (!i.hasExtra(k)) continue;
+                String s = str(i.getStringExtra(k));
+                if (s != null) return s;
+            } catch (Throwable ignored) {
+                // 类型不对就试下一个
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 把所有 extras 原样打出来。
+     * 高德改 key 名字的时候，看一眼这个就知道现在的真名是什么。
+     */
+    public static String extrasDump() {
+        Intent i = lastIntent;
+        if (i == null) return "  （还没收到过广播）\n";
+        android.os.Bundle b = i.getExtras();
+        if (b == null || b.isEmpty()) return "  （这一条没有 extras）\n";
+
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (String k : new java.util.TreeSet<>(b.keySet())) {
+            if (n++ > 40) {
+                sb.append("  …还有更多\n");
+                break;
+            }
+            Object v = b.get(k);
+            String s = v == null ? "null" : String.valueOf(v);
+            if (s.length() > 60) s = s.substring(0, 60) + "…";
+            sb.append("  ").append(k).append(" = ").append(s).append('\n');
+        }
+        return sb.toString();
     }
 
     /** 米 → 「80 米」/「2.3 公里」 */

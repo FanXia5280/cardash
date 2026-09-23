@@ -46,16 +46,45 @@ public final class VendorSignals {
     // 注意：这 37 个 vc_alias_* 里**没有 SOC 百分比**，只有一个一个的续航
     // （DTE = Distance To Empty）。所以电量百分比只能按续航折算，见 poll()。
     private static final String A_RANGE      = "vc_alias_left_ev_dte";    // 剩余电续航
-    private static final String A_RANGE_STD  = "vc_alias_disp_dte";       // 显示续航
-    private static final String A_RANGE_LOW  = "vc_alias_e_dte";          // 电续航
     private static final String A_SPEED      = "vc_alias_vehicle_speed";
     private static final String A_GEAR       = "vc_alias_vehicle_gear";
-    private static final String A_ODO        = "vc_alias_journey_all_distance";
     private static final String A_DRIVE      = "vc_alias_drive_style";
     private static final String A_TIRE_FL    = "vc_alias_tire_pressure";
 
+    /**
+     * 续航候选别名，按优先级从高到低。
+     *
+     * 车机会推好几个续航：left_ev_dte / edte / e_dte / disp_dte。
+     * 实测 disp_dte 一直是 0（显示续航没启用），所以必须按优先级挑，
+     * 而且 **0 要当成「这一路没数据」跳过** —— 不能把 0 当成真的没续航。
+     */
+    private static final String[] RANGE_ALIASES = {
+            "vc_alias_left_ev_dte",
+            "vc_alias_edte",
+            "vc_alias_e_dte",
+            "vc_alias_disp_dte",
+    };
+
+    /**
+     * 总里程候选别名。
+     *
+     * 车机把总里程以 0.1 km 为单位放在 REV 里程族里：
+     *   vc_alias_reev_long_term_driving_elec_driving_distance = 24593
+     * 换算成 2459.3 km，和 cacheCarS05Info.totalDistance 完全吻合。
+     * 而 journey_all_distance 是 D.apk 保护的正规别名，单位待定。
+     * 单位不统一，所以不写死比例，拿缓存值当标尺校准（见 scaleOdometer）。
+     */
+    private static final String[] ODO_ALIASES = {
+            "vc_alias_journey_all_distance",
+            "vc_alias_reev_long_term_driving_elec_driving_distance",
+            "vc_alias_vehicle_odometer",
+            "vc_alias_odometer",
+            "vc_alias_total_distance",
+    };
+
     private static final String[] PROBE = {
-            A_SPEED, A_GEAR, A_ODO, A_RANGE, A_RANGE_STD, A_RANGE_LOW, A_DRIVE,
+            A_SPEED, A_GEAR, "vc_alias_journey_all_distance",
+            A_RANGE, "vc_alias_disp_dte", "vc_alias_e_dte", A_DRIVE,
     };
 
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:\\.\\d+)?");
@@ -91,6 +120,13 @@ public final class VendorSignals {
     private volatile boolean speedAliasLive;
     private volatile boolean speedFieldLive;
     private volatile double lastSpeedField = Double.NaN;
+
+    // ── 续航：RANGE_ALIASES 里的优先级，值越小越优先 ──
+    private volatile int rangeRankUsed = 99;
+    private volatile long rangeAt;
+
+    // ── 总里程：缓存里的值只当量纲标尺用（它滞后但数值是对的）──
+    private volatile double cacheOdometer = -1;
     /** 最后一次收到实时车速推送的时间。超过窗口没再收到就说明它断供了，让位给下一个来源 */
     private volatile long speedAliasAt;
     private static final long SPEED_ALIAS_WINDOW_MS = 15000;
@@ -547,21 +583,36 @@ public final class VendorSignals {
 
     /** @return true 表示这个值真的被用上了 */
     private boolean apply(StateHub hub, String alias, Object raw) {
-        if (A_RANGE.equals(alias) || A_RANGE_LOW.equals(alias)) {
+        // ── 续航：按优先级择一。0 表示这一路没数据，不能当成「真的没续航」 ──
+        int rr = rangeRank(alias);
+        if (rr >= 0) {
             Double d = num(raw);
-            if (d == null || d < 0) return false;
-            hub.rangeKm = d;
-            hub.setSource("range", "vendor:" + alias);
+            if (d == null || d <= 0) return false;
+            // 当前这个来源 10 秒没再更新就允许更低优先级的接管，
+            // 免得高优先级的别名只推过一次就把续航钉死。
+            boolean stale = System.currentTimeMillis() - rangeAt > 10000;
+            if (rr <= rangeRankUsed || stale) {
+                hub.rangeKm = d;
+                rangeRankUsed = rr;
+                rangeAt = System.currentTimeMillis();
+                hub.setSource("range", "vendor:" + alias);
+            }
             return true;
         }
-        if (A_RANGE_STD.equals(alias)) {
+
+        // ── 总里程：实时推送。缓存那个是滞后快照，开着车都不涨 ──
+        if (isOdoAlias(alias)) {
             Double d = num(raw);
             if (d == null || d < 0) return false;
-            // 实时续航优先，标准续航只做兜底
-            if (hub.rangeKm == null) {
-                hub.rangeKm = d;
-                hub.setSource("range", "vendor:" + alias + "(std)");
+            double km = scaleOdometer(d);
+            // 和缓存/已有值差太远说明量纲判错了，宁可不采信
+            double ref = hub.odometerKm != null ? hub.odometerKm : cacheOdometer;
+            if (ref > 0 && Math.abs(km - ref) > 300) {
+                hub.setSource("odoReject", alias + "=" + d + "->" + Math.round(km) + " 差太远");
+                return false;
             }
+            hub.odometerKm = km;
+            hub.setSource("odometer", "vendor:" + alias);
             return true;
         }
         if (A_DRIVE.equals(alias)) {
@@ -607,14 +658,49 @@ public final class VendorSignals {
             hub.setSource("gear", "vendor:" + alias);
             return true;
         }
-        if (A_ODO.equals(alias)) {
-            Double d = num(raw);
-            if (d == null || d < 0) return false;
-            hub.odometerKm = d;
-            hub.setSource("odometer", "vendor:" + alias);
-            return true;
+        return false;
+    }
+
+    // ─────────────────────────────────────── 续航 / 总里程的候选与量纲
+
+    /** 是不是续航别名的优先级（越小越优先）；-1 表示不是续航别名 */
+    private static int rangeRank(String alias) {
+        for (int i = 0; i < RANGE_ALIASES.length; i++) {
+            if (RANGE_ALIASES[i].equals(alias)) return i;
+        }
+        return -1;
+    }
+
+    private static boolean isOdoAlias(String alias) {
+        for (String a : ODO_ALIASES) {
+            if (a.equals(alias)) return true;
         }
         return false;
+    }
+
+    /**
+     * 总里程的量纲校准。
+     *
+     * 实时别名的单位和缓存不一定一致：REV 里程族是 0.1 km，
+     * 而 journey_all_distance 可能直接是 km。这里不猜，拿缓存的值当标尺 ——
+     * 缓存虽然滞后（几分钟不更新），但数值本身是对的，
+     * 哪个比例算出来最接近就用哪个。
+     */
+    private double scaleOdometer(double raw) {
+        double ref = cacheOdometer;
+        if (ref <= 0) return raw;
+
+        double[] cand = {raw, raw / 10.0, raw / 100.0};
+        double best = cand[0];
+        double bestErr = Math.abs(cand[0] - ref);
+        for (int i = 1; i < cand.length; i++) {
+            double e = Math.abs(cand[i] - ref);
+            if (e < bestErr) {
+                bestErr = e;
+                best = cand[i];
+            }
+        }
+        return best;
     }
 
     /** 单位不确定时的保守判断：整数且小于等于 60 才怀疑是 m/s */
@@ -682,9 +768,14 @@ public final class VendorSignals {
                     hub.speedKmh = d;
                     hub.setSource("speed", "cache:" + field);
                 }
-            } else if ("odometer".equals(kind) && hub.odometerKm == null) {
-                hub.odometerKm = d;
-                hub.setSource("odometer", "cache:" + field);
+            } else if ("odometer".equals(kind)) {
+                // 只作量纲标尺（scaleOdometer 用它判断实时值要不要 /10），
+                // 不作为显示值 —— 它是滞后快照，开着车都不涨。
+                cacheOdometer = d;
+                if (hub.odometerKm == null) {
+                    hub.odometerKm = d;
+                    hub.setSource("odometer", "cache:" + field + "(待实时值)");
+                }
             } else if ("range".equals(kind) && hub.rangeKm == null) {
                 hub.rangeKm = d;
                 hub.setSource("range", "cache:" + field);

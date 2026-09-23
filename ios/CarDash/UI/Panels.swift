@@ -25,7 +25,6 @@ enum CoverImageCache {
 // MARK: - 左上：日期 + 时间
 
 struct ClockPanel: View {
-    let now: Date
     let scale: CGFloat
 
     private static let dateFmt: DateFormatter = {
@@ -43,15 +42,20 @@ struct ClockPanel: View {
     }()
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: scale * 10) {
-            Text(Self.dateFmt.string(from: now))
-                .foregroundStyle(.white.opacity(0.70))
-            Text(Self.timeFmt.string(from: now))
-                .foregroundStyle(.white)
+        // 用 TimelineView 自己驱动秒级刷新，**不依赖父视图的计时器**。
+        // 之前挂在父视图的 Timer 上：父视图只要有一次不再重绘，
+        // 时间就停在那不动了（用户反馈「时间不会刷新」）。
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            HStack(alignment: .firstTextBaseline, spacing: scale * 10) {
+                Text(Self.dateFmt.string(from: ctx.date))
+                    .foregroundStyle(.white.opacity(0.70))
+                Text(Self.timeFmt.string(from: ctx.date))
+                    .foregroundStyle(.white)
+            }
+            .font(.system(size: scale * 25, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
         }
-        .font(.system(size: scale * 25, weight: .medium, design: .rounded))
-        .monospacedDigit()
-        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 }
 
@@ -324,26 +328,24 @@ struct NavigationPanel: View {
                         .minimumScaleFactor(0.45)
                 }
 
+                // 「怎么走」——车机上高德卡片写的是「进入 天高路」，
+                // 这里保持同样的说法，和车机对得上。
                 if let road {
-                    Text(road)
-                        .font(.system(size: scale * 17, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.94))
+                    Text("进入 \(road)")
+                        .font(.system(size: scale * 18, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.96))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .minimumScaleFactor(0.6)
+                }
+
+                // 当前所在道路，弱化处理
+                if let a = nav?.after, !a.isEmpty {
+                    Text(a)
+                        .font(.system(size: scale * 12.5, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.55))
                         .lineLimit(1)
                         .truncationMode(.head)
-                }
-
-                if let a = nav?.after, !a.isEmpty {
-                    Text("注意距离 \(a)")
-                        .font(.system(size: scale * 12.5, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.60))
-                        .lineLimit(1)
-                }
-
-                if let arr = nav?.arrive, !arr.isEmpty {
-                    Text(arr)
-                        .font(.system(size: scale * 12.5, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.60))
-                        .lineLimit(1)
                 }
             } else {
                 HStack(spacing: scale * 10) {
@@ -390,6 +392,13 @@ struct NavSummaryPanel: View {
                     .font(.system(size: scale * 17, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white.opacity(0.9))
+            }
+            // 预计几点到达 —— 按用户要求从右边挪到顶栏
+            if let arr = nav?.arrive, !arr.isEmpty {
+                Text(arr)
+                    .font(.system(size: scale * 15, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.70))
             }
         }
         .opacity(active ? 1 : 0)

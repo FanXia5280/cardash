@@ -30,8 +30,17 @@ public final class MediaSignals {
     private ComponentName[] candidates;
     private volatile boolean running;
     private volatile ComponentName working;
-    /** 上一次计算封面用的曲目标识，用来避免每 600ms 重新压一次图 */
+    /** 上一次计算封面用的曲目标识 */
     private String lastCoverKey;
+    /**
+     * 上一次编码封面用的 Bitmap **实例**。
+     *
+     * 判断「要不要重新压图」必须看这个，不能只看曲目标识 ——
+     * 切歌那一瞬间 MediaMetadata 里的封面常常还是上一首的图，
+     * 按曲目标识判断会把上一首的图当成新歌的封面记下来、之后再也不更新，
+     * 表现就是「封面老显示上一首歌的」。
+     */
+    private Bitmap lastArtBitmap;
     /** 上一次查歌词的曲目标识 */
     private String lastLyricKey;
     /** 这一首歌有没有已经发起过联网兜底（避免反复请求） */
@@ -64,7 +73,9 @@ public final class MediaSignals {
                     // 忽略
                 }
                 if (running && handler != null) {
-                    handler.postDelayed(this, 600L);
+                    // 用户要求「全部实时同步，不要省电」，所以压到 250ms。
+                    // 这一轮只是读 MediaController 的快照，开销很小。
+                    handler.postDelayed(this, 250L);
                 }
             }
         };
@@ -164,15 +175,34 @@ public final class MediaSignals {
      * 曲目变化时重算，平时复用同一个字符串。
      */
     private void updateCover(StateHub hub, MediaMetadata md) {
-        String key = hub.mTitle == null ? null
-                : (hub.mTitle + '|' + hub.mArtist + '|' + hub.mDuration);
-        if (key != null && key.equals(lastCoverKey)) return;
+        String title = hub.mTitle;
+        String key = title == null ? null : (title + '|' + hub.mArtist);
+        boolean songChanged = key == null || !key.equals(lastCoverKey);
         lastCoverKey = key;
 
-        hub.mCover = null;
-        if (md == null || key == null) return;
+        Bitmap src = pickArtwork(md);
 
-        Bitmap src = null;
+        if (src == null) {
+            // 换歌了但新封面还没到（标题先到、图后到）。
+            // 这时必须把旧封面清掉 —— 否则屏幕上一直挂着上一首的图。
+            if (songChanged) {
+                hub.mCover = null;
+                lastArtBitmap = null;
+                hub.setSource("cover", title == null ? "无曲目" : "等封面");
+            }
+            return;
+        }
+
+        // 同一张图的实例、且没换歌 —— 不必重新编码
+        if (src == lastArtBitmap && !songChanged) return;
+
+        lastArtBitmap = src;
+        encodeCover(hub, src);
+    }
+
+    /** 依次尝试三个封面 key。注意每个 key 都可能抛异常，要各自兜住。 */
+    private static Bitmap pickArtwork(MediaMetadata md) {
+        if (md == null) return null;
         String[] keys = {
                 MediaMetadata.METADATA_KEY_ALBUM_ART,
                 MediaMetadata.METADATA_KEY_ART,
@@ -180,14 +210,17 @@ public final class MediaSignals {
         };
         for (String k : keys) {
             try {
-                src = md.getBitmap(k);
+                Bitmap b = md.getBitmap(k);
+                if (b != null && !b.isRecycled()) return b;
             } catch (Throwable ignored) {
-                src = null;
+                // 这个 key 没有就试下一个
             }
-            if (src != null) break;
         }
-        if (src == null || src.isRecycled()) return;
+        return null;
+    }
 
+    /** 缩到 240px、压 JPEG、base64，塞进 hub.mCover。 */
+    private void encodeCover(StateHub hub, Bitmap src) {
         try {
             int w = src.getWidth(), h = src.getHeight();
             if (w <= 0 || h <= 0) return;
@@ -218,6 +251,7 @@ public final class MediaSignals {
             hub.setSource("cover", "err:" + t.getClass().getSimpleName());
         }
     }
+
 
     /**
      * 歌词。
