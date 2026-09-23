@@ -144,6 +144,7 @@ struct AMapNavView: UIViewRepresentable {
     final class Coordinator: NSObject, MAMapViewDelegate {
 
         private var line: MAPolyline?
+        private var lineBorder: MAPolyline?
         private var routeCount = -1
         private var pin: MAPointAnnotation?
         private var lastKey: String?
@@ -175,7 +176,8 @@ struct AMapNavView: UIViewRepresentable {
 
             // 视距 = 用户基准 + 按车速自动加减档。
             // 只有目标变了才动，别每帧重置，否则 +/− 没效果。
-            let target = max(12, min(19, zoom + AMapNavView.autoZoomOffset(speed)))
+            // autoZoomOffset 就定义在 Coordinator 里（Self 指向它）
+            let target = max(12, min(19, zoom + Self.autoZoomOffset(speed)))
             if target != lastZoom {
                 lastZoom = target
                 view.setZoomLevel(target, animated: true)
@@ -197,12 +199,21 @@ struct AMapNavView: UIViewRepresentable {
 
             if route.count != routeCount {
                 routeCount = route.count
-                if let old = line { view.remove(old) }
+                for old in [line, lineBorder] { if let o = old { view.remove(o) } }
                 line = nil
+                lineBorder = nil
                 if route.count >= 2 {
                     // 高德算路返回的就是 GCJ-02，但我们内部统一存 WGS-84，
                     // 所以这里还是要转一道
                     let pts = route.map { p -> CLLocationCoordinate2D in ChinaCoord.toGcj(p) }
+
+                    // 先加白边（下层）—— 高德导航那条路就是「白底 + 蓝线」
+                    var b = pts
+                    let border = MAPolyline(coordinates: &b, count: UInt(pts.count))
+                    lineBorder = border
+                    view.add(border)
+
+                    // 再加主路线（上层）
                     var coords = pts
                     let l = MAPolyline(coordinates: &coords, count: UInt(pts.count))
                     line = l
@@ -239,8 +250,18 @@ struct AMapNavView: UIViewRepresentable {
         func mapView(_ mapView: MAMapView!, rendererFor overlay: MAOverlay!) -> MAOverlayRenderer! {
             guard let l = overlay as? MAPolyline else { return nil }
             let r = MAPolylineRenderer(polyline: l)
-            r?.strokeColor = UIColor(red: 0.25, green: 0.62, blue: 1.0, alpha: 0.95)
-            r?.lineWidth = 9
+
+            if l === lineBorder {
+                // 白边
+                r?.strokeColor = UIColor(red: 0.93, green: 0.97, blue: 1.0, alpha: 0.95)
+                r?.lineWidth = 15
+            } else {
+                // 主路线：高德导航那种**带箭头的 3D 路线**（官方属性 is3DArrowLine）
+                r?.strokeColor = UIColor(red: 0.18, green: 0.58, blue: 1.0, alpha: 0.98)
+                r?.lineWidth = 11
+                r?.is3DArrowLine = true
+                r?.sideColor = UIColor(red: 0.10, green: 0.40, blue: 0.86, alpha: 1.0)
+            }
             return r
         }
 
