@@ -165,6 +165,10 @@ struct BatteryGlyph: View {
 struct SpeedGauge: View {
     let speed: Double?
     let scale: CGFloat
+    /// 数字和 km/h 在这一块里怎么摆：
+    ///   横屏 .leading —— 速度贴左边，对应参考图里大 P 的位置
+    ///   竖屏 .center —— 居中
+    var align: HorizontalAlignment = .center
 
     private var text: String {
         guard let s = speed, s.isFinite else { return "--" }
@@ -172,7 +176,7 @@ struct SpeedGauge: View {
     }
 
     var body: some View {
-        VStack(spacing: scale * 0) {
+        VStack(alignment: align, spacing: scale * 0) {
             Text(text)
                 .font(.system(size: scale * 140, weight: .thin, design: .rounded))
                 .monospacedDigit()

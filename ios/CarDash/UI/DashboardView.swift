@@ -40,25 +40,38 @@ struct DashboardView: View {
                     .ignoresSafeArea()
             }
 
-            // 只在上、下各压一条渐变带给 HUD 垫底，**中间大片保持通亮**。
-            // 这样既保证白字读得清，又不会把地图挡住 —— 和参考图一致。
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.58), location: 0.00),
-                    .init(color: .black.opacity(0.10), location: 0.15),
-                    .init(color: .black.opacity(0.04), location: 0.58),
-                    .init(color: .black.opacity(0.40), location: 0.82),
-                    .init(color: .black.opacity(0.66), location: 1.00),
-                ],
-                startPoint: .top, endPoint: .bottom
-            )
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-
             GeometryReader { geo in
                 let k = scaleFactor(for: geo)
 
                 ZStack {
+                    // ── 黑色渐变遮罩：方向跟着屏幕转 ──
+                    // 参考图的做法：HUD 那一侧压暗，白字才读得清；
+                    // 地图和导航路线那一侧保持通亮，不受影响。
+                    //   横屏 → 压左边（速度在左边）
+                    //   竖屏 → 压上边（速度在上方），到中段就淡出，
+                    //          下面整块留给地图和路线
+                    if geo.size.height > geo.size.width {
+                        LinearGradient(
+                            stops: [
+                                .init(color: .black.opacity(0.62), location: 0.00),
+                                .init(color: .black.opacity(0.30), location: 0.18),
+                                .init(color: .black.opacity(0.00), location: 0.46),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    } else {
+                        LinearGradient(
+                            stops: [
+                                .init(color: .black.opacity(0.62), location: 0.00),
+                                .init(color: .black.opacity(0.30), location: 0.20),
+                                .init(color: .black.opacity(0.00), location: 0.52),
+                            ],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                    }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+
                     Group {
                         if geo.size.height > geo.size.width {
                             portraitLayout(k: k)
@@ -142,10 +155,11 @@ struct DashboardView: View {
 
             Spacer(minLength: 8)
 
-            // ── 中间：只有车速 ──
-            // 音乐卡已按要求移除，地图这块不再被占宽度。
-            SpeedGauge(speed: model.displaySpeed, scale: k)
-                .frame(maxWidth: .infinity)
+            // ── 车速移到左边（参考图里大 P 的位置），右边整块留给地图 ──
+            // 左边有黑色渐变垫底，白字压在上面读得清；
+            // 右边地图通亮，路线不会被挡。
+            SpeedGauge(speed: model.displaySpeed, scale: k, align: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 8)
 
@@ -190,12 +204,13 @@ struct DashboardView: View {
                 .opacity(model.displayNav?.isActive == true ? 1 : 0)
                 .padding(.top, k * 10)
 
-            Spacer(minLength: k * 6)
-
-            // ── 主角：车速 ──
+            // ── 车速放靠上一点（用户要求）──
+            // 上面有黑色渐变垫底；渐变到屏幕中段就淡出，
+            // 下面整块是通亮的地图和导航路线，不受遮罩影响。
             SpeedGauge(speed: model.displaySpeed, scale: k * 1.05)
+                .padding(.top, k * 4)
 
-            Spacer(minLength: k * 6)
+            Spacer(minLength: k * 16)
 
             // ── 转向卡 ──
             TurnCard(nav: model.displayNav, scale: k)
