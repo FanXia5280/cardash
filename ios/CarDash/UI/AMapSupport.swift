@@ -225,6 +225,72 @@ final class AnchoredMapView: MAMapView {
     }
 }
 
+/// 车辆位置标记：**苹果「查找」那种会呼吸的实心圆**（用户 2026-09-24 明确要求）。
+///
+/// 为什么不用 `MAAnnotationView.image`（一张静态图）：静态图动不起来。
+/// 这里用三个 `CAShapeLayer` —— 外层光晕（呼吸）、中层白圈、里层实心圆 ——
+/// 呼吸动效交给 Core Animation（跑在渲染服务上，**不吃主线程**，也就不影响地图帧率）。
+///
+/// ⚠️ 不要在子类里重写 `init(annotation:reuseIdentifier:)`：那是 ObjC 的初始化器，
+/// 空值标注一写错就编译不过（这类坑本项目踩过好几次）。所以这里**不写 init**，
+/// 用继承来的那个，再调一次 `prepare(online:)` 把三层建起来。
+final class CarDotView: MAAnnotationView {
+
+    private let halo = CAShapeLayer()
+    private let ring = CAShapeLayer()
+    private let core = CAShapeLayer()
+    private var ready = false
+
+    private static let side: CGFloat = 34
+    private static let coreRadius: CGFloat = 9
+    private static let ringRadius: CGFloat = 11.5
+    private static let haloRadius: CGFloat = 15
+
+    /// 建好三层并启动呼吸（只在第一帧做一次），之后每次只更新颜色。
+    func prepare(online: Bool) {
+        if !ready {
+            ready = true
+            frame = CGRect(x: 0, y: 0, width: Self.side, height: Self.side)
+            backgroundColor = .clear
+            layer.addSublayer(halo)
+            layer.addSublayer(ring)
+            layer.addSublayer(core)
+
+            let c = CGPoint(x: Self.side / 2, y: Self.side / 2)
+            func circle(_ r: CGFloat) -> CGPath {
+                UIBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r,
+                                            width: r * 2, height: r * 2)).cgPath
+            }
+            halo.path = circle(Self.haloRadius)
+            ring.path = circle(Self.ringRadius)
+            ring.fillColor = UIColor.white.cgColor
+            core.path = circle(Self.coreRadius)
+
+            // 呼吸：光晕一边放大一边淡出，无限循环
+            let scale = CABasicAnimation(keyPath: "transform.scale")
+            scale.fromValue = 0.55
+            scale.toValue = 1.15
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0.75
+            fade.toValue = 0.0
+            let g = CAAnimationGroup()
+            g.animations = [scale, fade]
+            g.duration = 1.8
+            g.repeatCount = .infinity
+            g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            halo.add(g, forKey: "breathe")
+        }
+        setOnline(online)
+    }
+
+    /// 绿 = 在线（能取到当前位置）、灰 = 不在线
+    func setOnline(_ online: Bool) {
+        let base: UIColor = online ? .systemGreen : .systemGray
+        core.fillColor = base.cgColor
+        halo.fillColor = base.withAlphaComponent(0.30).cgColor
+    }
+}
+
 struct AMapNavView: UIViewRepresentable {
 
     let coord: CLLocationCoordinate2D?      // WGS-84
@@ -310,30 +376,7 @@ struct AMapNavView: UIViewRepresentable {
         /// `viewFor` 不会为已经存在的标注再调一次，所以状态变了要手动换。
         private var carOnline: Bool?
 
-        /// 车辆位置圆点：苹果「查找」那种实心圆，绿=在线、灰=不在线（用户要求）。
-        /// 用 CoreGraphics 现画，不依赖任何图片资源（工程里目前一张图都没有）。
-        private static func carDot(online: Bool) -> UIImage {
-            let dot: CGFloat = 18
-            let halo: CGFloat = 34
-            let side = halo + 10
-            let size = CGSize(width: side, height: side)
-            let color: UIColor = online ? .systemGreen : .systemGray
-            return UIGraphicsImageRenderer(size: size).image { _ in
-                let c = CGPoint(x: side / 2, y: side / 2)
-                // 外圈光晕（同色半透明），让它在地图上更"发亮"
-                color.withAlphaComponent(0.28).setFill()
-                UIBezierPath(ovalIn: CGRect(x: c.x - halo / 2, y: c.y - halo / 2,
-                                            width: halo, height: halo)).fill()
-                // 白色描边环
-                UIColor.white.setFill()
-                UIBezierPath(ovalIn: CGRect(x: c.x - dot / 2 - 2.5, y: c.y - dot / 2 - 2.5,
-                                            width: dot + 5, height: dot + 5)).fill()
-                // 实心圆
-                color.setFill()
-                UIBezierPath(ovalIn: CGRect(x: c.x - dot / 2, y: c.y - dot / 2,
-                                            width: dot, height: dot)).fill()
-            }
-        }
+
 
         /// 把相机摆成「车落在 `MapAnchor` 指定位置」的样子。
         ///
@@ -425,8 +468,8 @@ struct AMapNavView: UIViewRepresentable {
             lastLocated = (coord != nil)
             if carOnline != lastLocated {
                 carOnline = lastLocated
-                if let a = carPin, let v = view.view(for: a) {
-                    v.image = Self.carDot(online: lastLocated)
+                if let a = carPin, let v = view.view(for: a) as? CarDotView {
+                    v.setOnline(lastLocated)
                 }
             }
 
@@ -547,14 +590,14 @@ struct AMapNavView: UIViewRepresentable {
             // 之前那个高德三角箭头太小，导航态又已经有原版 3D 车标，非导航态就用圆点。
             if annotation === carPin {
                 let id = "car"
-                var v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
-                if v == nil {
-                    v = MAAnnotationView(annotation: annotation, reuseIdentifier: id)
+                var av = mapView.dequeueReusableAnnotationView(withIdentifier: id)
+                if !(av is CarDotView) {
+                    av = CarDotView(annotation: annotation, reuseIdentifier: id)
                 }
-                v?.annotation = annotation
-                v?.image = Self.carDot(online: carOnline ?? true)
-                v?.centerOffset = .zero
-                return v
+                av?.annotation = annotation
+                av?.centerOffset = .zero
+                (av as? CarDotView)?.prepare(online: carOnline ?? true)
+                return av
             }
 
             let id = "dest"
