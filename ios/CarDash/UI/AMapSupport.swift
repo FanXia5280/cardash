@@ -121,9 +121,9 @@ struct AMapNavView: UIViewRepresentable {
     let coord: CLLocationCoordinate2D?      // WGS-84
     let heading: Double
     let route: [CLLocationCoordinate2D]     // WGS-84
+    let dest: CLLocationCoordinate2D?       // WGS-84
     /// 按路况分段的路线（高德 tmcs 的 status），用来画绿/黄/红
     let segments: [RouteSegment]
-    let dest: CLLocationCoordinate2D?       // WGS-84
     /// 视距（缩放级别）。高德官方 API：zoomLevel，范围 3~20。
     /// 越大越近。16≈200米、17≈100米、18≈50米、19≈25米。
     let zoom: Int
@@ -161,8 +161,8 @@ struct AMapNavView: UIViewRepresentable {
                                    coord: coord,
                                    heading: heading,
                                    route: route,
-                                   segments: segments,
                                    dest: dest,
+                                   segments: segments,
                                    zoom: zoom,
                                    speed: speed)
     }

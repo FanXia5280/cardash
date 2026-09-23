@@ -29,7 +29,7 @@ struct CarSnapshot: Codable, Equatable {
 /// 高德 Web API（extensions=all）的 steps[].tmcs[] 里每小段都有 status：
 /// 畅通 / 缓行 / 拥堵 / 严重拥堵 —— 用它分段着色，就是高德导航那种
 /// 「绿的路 + 红的堵点」，而不是自己猜一根蓝线。
-struct RouteSegment: Equatable {
+struct RouteSegment {
     var points: [CLLocationCoordinate2D]
     /// 0 畅通 / 1 缓行 / 2 拥堵 / 3 严重拥堵
     var status: Int
