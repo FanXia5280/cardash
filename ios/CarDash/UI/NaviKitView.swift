@@ -68,14 +68,14 @@ struct NaviKitNavView: UIViewRepresentable {
         }
 
         context.coordinator.attach(view: v)
-        context.coordinator.update(view: v, from: from, to: to, simulate: simulate)
+        context.coordinator.update(naviView: v, from: from, to: to, simulate: simulate)
         return v
     }
 
     func updateUIView(_ v: AMapNaviDriveView, context: Context) {
         // 自车图标位置随屏幕方向走（横屏靠右 / 竖屏靠下）
         context.coordinator.applyAnchor(view: v)
-        context.coordinator.update(view: v, from: from, to: to, simulate: simulate)
+        context.coordinator.update(naviView: v, from: from, to: to, simulate: simulate)
     }
 
     func makeCoordinator() -> NaviCoordinator { NaviCoordinator() }
@@ -144,7 +144,11 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
                               isAMapCoordinate: false)
     }
 
-    func update(view: AMapNaviDriveView, from: CLLocationCoordinate2D?,
+    /// ⚠️ 形参**不要**叫 `view`：那会盖住上面的 `private weak var view`，
+    /// 在函数体里 `view` 就变成了非可选类型 —— `if let v = view` 会直接编译不过
+    ///（2026-09-23 CI 就是这么挂的：`initializer for conditional binding must have
+    ///  Optional type`）。所以这里用 `naviView`。
+    func update(naviView: AMapNaviDriveView, from: CLLocationCoordinate2D?,
                 to: CLLocationCoordinate2D?, simulate: Bool) {
         self.simulate = simulate
 
@@ -175,7 +179,7 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
         let m = manager ?? AMapNaviDriveManager.sharedInstance()
         if manager == nil {
             m.delegate = self
-            if let v = view { m.addDataRepresentative(v) }
+            m.addDataRepresentative(naviView)
             // ── 仪表盘自己不出声 ──
             // 用户明确要求：不要导航语音播报（车机自己会报）。
             // isUseInternalTTS 头文件默认就是 NO，这里显式声明一次防止版本差异；
