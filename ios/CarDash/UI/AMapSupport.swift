@@ -268,7 +268,7 @@ struct AMapNavView: UIViewRepresentable {
         // 旋转时立刻重摆车头位置（见 AnchoredMapView 的说明）
         v.onLayout = { [weak v, weak co = context.coordinator] in
             guard let v else { return }
-            co?.applyCamera(v)
+            co?.reapplyCamera(v)
         }
         return v
     }
@@ -304,6 +304,8 @@ struct AMapNavView: UIViewRepresentable {
         private var lastHeading: Double = 0
         /// 能不能取到当前位置（true = 在线）。车标颜色用它：绿=在线、灰=不在线
         private var lastLocated = true
+        /// 相机偏移没生效时的重试计数（见 reapplyCamera）
+        private var cameraRetry = 0
         /// 上一次画车标用的在线状态。变了才换图 ——
         /// `viewFor` 不会为已经存在的标注再调一次，所以状态变了要手动换。
         private var carOnline: Bool?
@@ -337,8 +339,11 @@ struct AMapNavView: UIViewRepresentable {
         ///
         /// 除了定位更新，**每次 layout 也会调**（横竖屏切换 / 尺寸变化），
         /// 所以它只能依赖 lastCoord / lastHeading，不能依赖"这次传进来的新位置"。
-        func applyCamera(_ view: MAMapView) {
-            guard let c = lastCoord else { return }
+        ///
+        /// 返回值是**有没有真的偏移成功** —— 失败时调用方要重试（见 `reapplyCamera`）。
+        @discardableResult
+        func applyCamera(_ view: MAMapView) -> Bool {
+            guard let c = lastCoord else { return false }
             // MAMapView 没有"自车图标位置"这种能力（它的 screenAnchor 是**缩放**
             // 锚点，不是内容锚点），所以自己反算：先把中心放到车上，
             // 再看「想让车出现的那个屏幕点」现在压着哪个坐标，把中心平移过去。
@@ -347,22 +352,44 @@ struct AMapNavView: UIViewRepresentable {
             // SwiftUI 会把超大的子视图摆在父视图**左上角**，于是左/上露出一条
             // 地图没盖住的黑边（用户截图里说的「黑的断层」），落点也是错的。
             view.centerCoordinate = c
+            view.rotationDegree = CGFloat(lastHeading)   // 车头朝上（和导航态一致）
+
             let w = view.bounds.width
             let h = view.bounds.height
-            if w > 1, h > 1 {
-                let a = MapAnchor.of(size: view.bounds.size)
-                let at = view.convert(CGPoint(x: w * a.x, y: h * a.y),
-                                      toCoordinateFrom: view)
-                let dLat = c.latitude - at.latitude
-                let dLon = c.longitude - at.longitude
-                // 偏移量必须小得合理 —— 地图还没渲染好时 convert 可能返回垃圾
-                if abs(dLat) < 0.02, abs(dLon) < 0.02 {
-                    view.centerCoordinate = CLLocationCoordinate2D(
-                        latitude: c.latitude + dLat,
-                        longitude: c.longitude + dLon)
-                }
+            guard w > 1, h > 1 else { return false }
+
+            let a = MapAnchor.of(size: view.bounds.size)
+            let at = view.convert(CGPoint(x: w * a.x, y: h * a.y),
+                                  toCoordinateFrom: view)
+            let dLat = c.latitude - at.latitude
+            let dLon = c.longitude - at.longitude
+            // ⚠️ 地图还没渲染好时 `convert` 会返回垃圾值，偏移就不成立。
+            //    这时**绝不能**就这么算了 —— 那车会停在屏幕正中，几秒后才落回
+            //    该在的位置（用户 2026-09-24 截图实测，横竖屏都有）。
+            //    返回 false，交给 reapplyCamera 排队重试。
+            guard abs(dLat) < 0.02, abs(dLon) < 0.02 else { return false }
+            view.centerCoordinate = CLLocationCoordinate2D(
+                latitude: c.latitude + dLat,
+                longitude: c.longitude + dLon)
+            return true
+        }
+
+        /// 重摆相机；**没成功就排队重试**（地图渲染好之后一次就成）。
+        ///
+        /// 只在"相机偏移还没生效"时重试，最多 8 次、退避到 0.8s ——
+        /// 正常情况下第一帧就成功，重试根本不会发生。
+        func reapplyCamera(_ view: MAMapView) {
+            if applyCamera(view) {
+                cameraRetry = 0
+                return
             }
-            view.rotationDegree = CGFloat(lastHeading)   // 车头朝上（和导航态一致）
+            guard cameraRetry < 8 else { return }
+            cameraRetry += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1 * Double(cameraRetry)) {
+                [weak self, weak view] in
+                guard let self, let view else { return }
+                self.reapplyCamera(view)
+            }
         }
 
         func update(view: MAMapView,
@@ -410,7 +437,7 @@ struct AMapNavView: UIViewRepresentable {
             let key = "\(c.latitude),\(c.longitude),\(Int(heading))"
             if key != lastKey {
                 lastKey = key
-                applyCamera(view)
+                reapplyCamera(view)
                 // 俯角交给动画，免得每秒硬跳一次看着卡
                 UIView.animate(withDuration: 0.9, delay: 0,
                                options: [.curveLinear, .beginFromCurrentState]) {

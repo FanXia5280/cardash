@@ -42,6 +42,12 @@ struct NaviKitNavView: UIViewRepresentable {
     /// 路口放大图：SDK 在数据回调里给图（比例固定 25:16），nil = 收起。
     /// 只在实际导航中会有数据；SDK 自己判断何时显示/隐藏。
     var onCrossImage: ((UIImage?) -> Void)? = nil
+    /// 导航引擎**真的开始跟车**了（`didStartNavi`）。
+    ///
+    /// 为什么需要它：导航真正开始之前，`AMapNaviDriveView` 显示的是 SDK 默认位置
+    ///（**北京**）—— 用户实测"模拟导航会闪一下北京"。DashboardView 拿到这个回调后
+    /// 才把垫底的非导航地图撤掉，所以那一下被挡住了（见那里的注释）。
+    var onStarted: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> AMapNaviDriveView {
         // Key 和隐私接口在 App 启动时已经设置过；这里再设一遍是幂等的
@@ -105,6 +111,7 @@ struct NaviKitNavView: UIViewRepresentable {
         }
 
         context.coordinator.onCrossImage = onCrossImage
+        context.coordinator.onStarted = onStarted
         context.coordinator.attach(view: v)
         context.coordinator.update(naviView: v, from: from, to: to, simulate: simulate)
         return v
@@ -114,6 +121,7 @@ struct NaviKitNavView: UIViewRepresentable {
         // 自车图标位置随屏幕方向走（横屏靠右 / 竖屏靠下）
         context.coordinator.applyAnchor(view: v)
         context.coordinator.onCrossImage = onCrossImage
+        context.coordinator.onStarted = onStarted
         context.coordinator.update(naviView: v, from: from, to: to, simulate: simulate)
     }
 
@@ -141,6 +149,9 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
 
     /// 路口放大图有/无（SDK 给图，nil = 收起）。转发给 UI（见 DashboardView 的 SpeedSlot）。
     var onCrossImage: ((UIImage?) -> Void)?
+
+    /// 导航真的起步了（`didStartNavi`）—— 在这之前导航视图显示的是 SDK 默认位置（北京）。
+    var onStarted: (() -> Void)?
 
     private weak var view: AMapNaviDriveView?
     private var manager: AMapNaviDriveManager?
@@ -298,6 +309,12 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
     /// 过了路口 / 该收起来了 —— 收图之后速度表自己会露出来。
     func driveManagerHideCrossImage(_ driveManager: AMapNaviDriveManager) {
         onCrossImage?(nil)
+    }
+
+    /// 导航（含模拟导航）真的起步了 —— DashboardView 靠它把"垫底的非导航地图"撤掉，
+    /// 这样 SDK 默认位置（北京）那一帧就被挡住了。
+    func driveManager(_ driveManager: AMapNaviDriveManager, didStartNavi naviMode: AMapNaviMode) {
+        onStarted?()
     }
 }
 #endif

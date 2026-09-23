@@ -8,6 +8,11 @@ struct DashboardView: View {
     /// 用户要求：只遮速度、不挡别的元素，所以它和速度表共用同一格（见 SpeedSlot）。
     @State private var crossImage: UIImage?
 
+    /// 导航引擎真的开始跟车了吗（`didStartNavi`）。
+    /// 在那之前 `AMapNaviDriveView` 显示的是 SDK 默认位置（**北京**），
+    /// 所以先用一张非导航地图垫底顶着；起步后再换成导航视图（用户实测会闪一下北京）。
+    @State private var navStarted = false
+
     @State private var showSettings = false
     /// 点一下屏幕才浮出设置按钮。
     /// 之前是「点屏幕任意位置直接进设置」，开车时手一碰就弹走了，
@@ -44,10 +49,29 @@ struct DashboardView: View {
                 // 官方文档写明巡航只给数据、视图不跟车（实测停在默认位置＝北京）。
                 // 所以没目的地时回下面那套 MAMapView，但那边已经调成和这里同一套观感
                 // （`.naviNight` 底图 + 高德官方车标 + 同一组锚点）。
-                NaviKitNavView(from: model.coord, to: dest,
-                               simulate: model.isSimulating,
-                               onCrossImage: { crossImage = $0 })
-                    .ignoresSafeArea()
+                ZStack {
+                    // 导航真正开始之前，导航视图显示的是 SDK 默认位置（**北京**）——
+                    // 用户实测"会闪一下北京"。所以先垫一张**非导航地图**顶着
+                    //（它位置和车标都是对的），`didStartNavi` 一来就把它撤掉。
+                    if !navStarted {
+                        DashboardMapView(coord: model.coord,
+                                         heading: model.heading,
+                                         route: model.route,
+                                         dest: model.routeDest,
+                                         amapAgreed: amapAgreed,
+                                         useRasterFallback: useAmapTiles,
+                                         zoom: zoom,
+                                         speed: model.displaySpeed,
+                                         segments: model.routeSegments)
+                    }
+
+                    NaviKitNavView(from: model.coord, to: dest,
+                                   simulate: model.isSimulating,
+                                   onCrossImage: { crossImage = $0 },
+                                   onStarted: { navStarted = true })
+                        .opacity(navStarted ? 1 : 0)
+                }
+                .ignoresSafeArea()
             } else {
                 // 兜底：用户没同意高德 SDK 的隐私协议时，只能用栅格/苹果地图。
                 // 这时候样式和导航态对不上是没办法的事（SDK 不允许未同意就创建地图）。
@@ -190,6 +214,10 @@ struct DashboardView: View {
                 zoom = MapZoom.clamp(zoom + (newOff - lastAutoOffset))
                 lastAutoOffset = newOff
             }
+        }
+        .onChange(of: model.routeDest == nil) { gone in
+            // 目的地没了（清除模拟路线 / 导航结束）⇒ 下次重新导航要重新"垫底"
+            if gone { navStarted = false }
         }
     }
 
