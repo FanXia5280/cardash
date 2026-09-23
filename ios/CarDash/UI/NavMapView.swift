@@ -1,6 +1,7 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import CoreImage
 
 // MARK: - 火星坐标（GCJ-02）转换
 
@@ -32,7 +33,7 @@ enum ChinaCoord {
         var r = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * sqrt(abs(x))
         r += (20.0 * sin(6.0 * x * .pi) + 20.0 * sin(2.0 * x * .pi)) * 2.0 / 3.0
         r += (20.0 * sin(x * .pi) + 40.0 * sin(x / 3.0 * .pi)) * 2.0 / 3.0
-        r += (150.0 * sin(x / 12.0 * .pi) + 300.0 * sin(x / 30.0 * .pi)) * 2.0 / 3.0
+        r += (150.0 * sin(x / 12.0 * .pi) + 300.0 * sin(x * .pi / 30.0)) * 2.0 / 3.0
         return r
     }
 
@@ -67,28 +68,76 @@ enum ChinaCoord {
 
 // MARK: - 高德瓦片
 
-/// 高德的路网瓦片。
+/// 高德的路网瓦片 + 深色化处理。
 ///
 /// 走它公开的瓦片服务（`wprd0N.is.autonavi.com`），**不需要 SDK、不需要 key**，
 /// 所以能直接塞进 MapKit 的 `MKTileOverlay`，CI 上也不用装任何依赖。
-/// 拿到的就是高德那套配色和路网，视觉上和车机一致。
+///
+/// ⚠️ 两个坑：
+///   1. **坐标系是 GCJ-02**，调用方负责把坐标转过去（见 ChinaCoord）
+///   2. **style=7 是浅色地图**，而车机参考图是深色的。
+///      高德没有公开深色栅格样式，所以这里在瓦片加载完的瞬间
+///      做一次「反相 + 降饱和 + 轻微蓝调」——把浅色地图翻成深色，
+///      这是把浅色栅格变深色的通用手法，配色能压到接近参考图那种深蓝灰。
 final class AmapTileOverlay: MKTileOverlay {
 
-    init() {
+    private static let ctx = CIContext(options: [.useSoftwareRenderer: false])
+
+    /// 浅色 → 深色
+    private static func darken(_ data: Data) -> Data? {
+        guard let img = UIImage(data: data), let cg = img.cgImage else { return nil }
+        let ci = CIImage(cgImage: cg)
+
+        // 反相：白底变深底、深色路网变亮线，这是最关键的一步
+        var out = ci.applyingFilter("CIColorInvert")
+        // 降饱和 + 抬对比，把反相后的杂色收干净
+        out = out.applyingFilter("CIColorControls", parameters: [
+            kCIInputSaturationKey: 0.42,
+            kCIInputBrightnessKey: -0.015,
+            kCIInputContrastKey: 1.18,
+        ])
+        // 往冷色调偏一点，贴近参考图那种深蓝灰
+        out = out.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0.86, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 0.94, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 1.14, w: 0),
+            "inputBiasVector": CIVector(x: 0, y: 0.008, z: 0.02, w: 0),
+        ])
+
+        guard let cgOut = ctx.createCGImage(out, from: ci.extent) else { return nil }
+        return UIImage(cgImage: cgOut).jpegData(compressionQuality: 0.88)
+    }
+
+    init(dark: Bool) {
+        self.dark = dark
         super.init(urlTemplate: nil)
-        // 坐标系是 GCJ-02，调用方负责把坐标转过去
         canReplaceMapContent = true
         tileSize = CGSize(width: 256, height: 256)
         minimumZ = 3
-        maximumZ = 19
+        // ⚠️ 上限卡在 18。再往上高德就没瓦片了，会整片变成空白格网 ——
+        // 那正是「地图下半截是黑格子」的原因。
+        maximumZ = 18
     }
 
+    private let dark: Bool
+
     override func url(forTilePath path: MKTileOverlayPath) -> URL {
-        // 轮换四个 CDN 节点，免得单节点限速
         let host = "wprd0\((abs(path.x + path.y + path.z) % 4) + 1).is.autonavi.com"
         let s = "https://\(host)/appmaptile?lang=zh_cn&size=1&scl=1&style=7"
             + "&x=\(path.x)&y=\(path.y)&z=\(path.z)"
         return URL(string: s) ?? URL(string: "https://wprd01.is.autonavi.com")!
+    }
+
+    override func loadTile(at path: MKTileOverlayPath,
+                           result: @escaping (Data?, Error?) -> Void) {
+        super.loadTile(at: path) { data, err in
+            guard self.dark, err == nil, let d = data, !d.isEmpty else {
+                result(data, err)
+                return
+            }
+            // 这个回调本来就在后台线程，直接处理没问题
+            result(AmapTileOverlay.darken(d) ?? d, nil)
+        }
     }
 }
 
@@ -97,9 +146,9 @@ final class AmapTileOverlay: MKTileOverlay {
 /// 导航地图。
 ///
 /// 视觉对齐参考图：
-///   - 高德底图（深色路网），车头朝上跟随
-///   - 车机报目的地时自动算一条路线画上去（蓝色）
-///   - 相机用短动画跟随，不是每秒硬跳一次 —— 那样看着就是「卡」
+///   - 高德底图（深色），车头朝上跟随
+///   - 相机**拉远**到能看到周围几个街区，不是贴着脸
+///   - 车机报目的地时自动算一条路线画上去
 ///
 /// 坐标说明：喂进来的一律是 **WGS-84**（GPS 和 MKDirections 都是），
 /// 内部转成 GCJ-02 再交给高德瓦片，否则整体偏移几百米。
@@ -112,6 +161,14 @@ struct NavMapView: UIViewRepresentable {
     /// 目的地（WGS-84）
     let dest: CLLocationCoordinate2D?
     let useAmapTiles: Bool
+
+    // ── 相机参数 ──
+    // 之前是 330 / 50°，太近了：屏幕下半部分的地面几乎贴着镜头，
+    // 缩放被顶到 19 级以上，高德没瓦片 → 空白格网。
+    // 现在拉到 1100 米、俯角 55°，视野里能看到周围几个街区，
+    // 和参考图那种「鸟瞰一大片」是一个量级。
+    private static let cameraDistance: CLLocationDistance = 1100
+    private static let cameraPitch: CGFloat = 55
 
     func makeUIView(context: Context) -> MKMapView {
         let v = MKMapView()
@@ -159,20 +216,18 @@ struct NavMapView: UIViewRepresentable {
                     dest: CLLocationCoordinate2D?,
                     useAmapTiles: Bool) {
 
-            // 底图切换
             if useAmapTiles != drewAmap {
                 drewAmap = useAmapTiles
-                view.removeOverlays(view.overlays.filter { $0 is AmapTileOverlay })
+                for o in view.overlays where o is AmapTileOverlay { view.removeOverlay(o) }
                 if useAmapTiles {
-                    view.addOverlay(AmapTileOverlay(), level: .aboveRoads)
+                    view.addOverlay(AmapTileOverlay(dark: true), level: .aboveRoads)
                 }
             }
 
             guard let raw = coord else { return }
             let c = useAmapTiles ? ChinaCoord.toGcj(raw) : raw
 
-            // ── 相机：只有真的动了才更新，而且用短动画贴着走 ──
-            // 原来每帧 setCamera(animated: false)，GPS 一秒一跳，看着就是卡。
+            // ── 相机：位置/车头真的变了才更新，用短动画贴着走 ──
             let moved = lastCamera == nil
                 || abs(lastCamera!.0.latitude - c.latitude) > 1e-7
                 || abs(lastCamera!.0.longitude - c.longitude) > 1e-7
@@ -180,8 +235,8 @@ struct NavMapView: UIViewRepresentable {
             if moved {
                 lastCamera = (c, heading)
                 let cam = MKMapCamera(lookingAtCenter: c,
-                                      fromDistance: 330,
-                                      pitch: 50,
+                                      fromDistance: NavMapView.cameraDistance,
+                                      pitch: NavMapView.cameraPitch,
                                       heading: heading)
                 UIView.animate(withDuration: 0.9,
                                delay: 0,
@@ -198,8 +253,6 @@ struct NavMapView: UIViewRepresentable {
                     let pts = useAmapTiles ? route.map(ChinaCoord.toGcj) : route
                     let p = MKPolyline(coordinates: pts, count: pts.count)
                     routeLine = p
-                    // aboveRoads 会压在瓦片上面；瓦片本身也是 aboveRoads，
-                    // 靠加入顺序决定层级，所以路线在瓦片之后添加就没问题
                     view.addOverlay(p, level: .aboveRoads)
                 }
             }
@@ -226,8 +279,7 @@ struct NavMapView: UIViewRepresentable {
             }
             if let p = overlay as? MKPolyline {
                 let r = MKPolylineRenderer(polyline: p)
-                // 高德路线那种蓝
-                r.strokeColor = UIColor(red: 0.20, green: 0.55, blue: 1.0, alpha: 0.95)
+                r.strokeColor = UIColor(red: 0.25, green: 0.62, blue: 1.0, alpha: 0.95)
                 r.lineWidth = 9
                 r.lineCap = .round
                 r.lineJoin = .round

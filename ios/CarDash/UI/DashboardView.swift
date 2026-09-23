@@ -21,35 +21,28 @@ struct DashboardView: View {
                 MapPlaceholder(reason: reason)
                     .ignoresSafeArea()
             } else {
-                GeometryReader { g in
-                    NavMapView(coord: model.coord,
-                               heading: model.heading,
-                               route: model.route,
-                               dest: model.routeDest,
-                               useAmapTiles: useAmapTiles)
-                        // 渐变地图：中心实、四边渐隐进底色。
-                        // 参考图里地图和 HUD 之间没有硬边界；而且四边压暗之后，
-                        // HUD 的文字不会被路网的花纹干扰。
-                        .mask(
-                            RadialGradient(
-                                gradient: Gradient(stops: [
-                                    .init(color: .black, location: 0.00),
-                                    .init(color: .black, location: 0.60),
-                                    .init(color: .black.opacity(0.55), location: 0.82),
-                                    .init(color: .black.opacity(0.00), location: 1.00),
-                                ]),
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: max(g.size.width, g.size.height) * 0.72
-                            )
-                        )
-                }
-                .ignoresSafeArea()
+                NavMapView(coord: model.coord,
+                           heading: model.heading,
+                           route: model.route,
+                           dest: model.routeDest,
+                           useAmapTiles: useAmapTiles)
+                    // 地图**铺满整屏**。
+                    // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
+                    // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
+                    // 它是整块地图通亮，只在上下压两条渐变带给 HUD 垫底。
+                    .ignoresSafeArea()
             }
 
-            // 上下再压一层很淡的暗角，保证白色 HUD 在任何底色上都读得清
+            // 只在上、下各压一条渐变带给 HUD 垫底，**中间大片保持通亮**。
+            // 这样既保证白字读得清，又不会把地图挡住 —— 和参考图一致。
             LinearGradient(
-                colors: [.black.opacity(0.30), .clear, .black.opacity(0.36)],
+                stops: [
+                    .init(color: .black.opacity(0.58), location: 0.00),
+                    .init(color: .black.opacity(0.10), location: 0.15),
+                    .init(color: .black.opacity(0.04), location: 0.58),
+                    .init(color: .black.opacity(0.40), location: 0.82),
+                    .init(color: .black.opacity(0.66), location: 1.00),
+                ],
                 startPoint: .top, endPoint: .bottom
             )
             .ignoresSafeArea()
@@ -116,8 +109,12 @@ struct DashboardView: View {
                     .hudCard(k)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                // 注意顺序：opacity 必须在 hudCard **之后**。
+                // 面板自己那层 opacity 是加在内容上的，卡片底会留在外面 ——
+                // 上一版没导航时会看到一块空的深色圆角矩形，就是这么来的。
                 NavSummaryPanel(nav: model.displayNav, scale: k)
                     .hudCard(k)
+                    .opacity(model.displayNav?.isActive == true ? 1 : 0)
                     .padding(.top, k * 4)
 
                 AltitudePanel(altitude: model.displayAltitude, scale: k)
@@ -172,6 +169,7 @@ struct DashboardView: View {
             // ── 导航摘要：还有多久 / 多远 / 几点到 ──
             NavSummaryPanel(nav: model.displayNav, scale: k)
                 .hudCard(k)
+                .opacity(model.displayNav?.isActive == true ? 1 : 0)
                 .padding(.top, k * 10)
 
             Spacer(minLength: k * 6)

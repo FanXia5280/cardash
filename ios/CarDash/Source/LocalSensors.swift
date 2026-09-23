@@ -59,7 +59,10 @@ final class LocalSensors: NSObject, CLLocationManagerDelegate {
             last = loc
         }
 
-        let speedKmh = loc.speed >= 0 ? loc.speed * 3.6 : nil
+        // loc.speed 为负表示这一帧速度无效（刚定位到、或静止时常见）。
+        // 之前直接给 nil，仪表就显示 "--"；可只要定位有效，静止就是 0 km/h，
+        // 显示 0 才对，显示 "--" 反而像坏了。
+        let speedKmh = loc.speed >= 0 ? loc.speed * 3.6 : 0
         let altitude = loc.verticalAccuracy > 0 ? loc.altitude : nil
         onUpdate?(speedKmh, altitude, meters / 1000.0)
         onFix?(loc)
