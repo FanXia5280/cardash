@@ -461,7 +461,7 @@ final class DashboardModel: ObservableObject {
             URLQueryItem(name: "strategy", value: "32"),   // 高德推荐（躲避拥堵+不走高速）
             URLQueryItem(name: "key", value: AMapConfig.webKey),
         ]
-        guard let url = comp.url else { done(nil); return }
+        guard let url = comp.url else { done(nil, nil); return }
 
         URLSession.shared.dataTask(with: url) { data, _, _ in
             guard let data,
@@ -471,7 +471,7 @@ final class DashboardModel: ObservableObject {
                   let paths = route["paths"] as? [[String: Any]],
                   let steps = paths.first?["steps"] as? [[String: Any]]
             else {
-                done(nil)
+                done(nil, nil)
                 return
             }
             // 高德在 extensions=all 时会给 steps[].tmcs[]，

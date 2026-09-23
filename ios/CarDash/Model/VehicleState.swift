@@ -1,4 +1,5 @@
 import Foundation
+import CoreLocation
 
 /// 车机桥接推送的单帧数据。字段全部可选，缺省表示该信号当前不可用。
 struct CarSnapshot: Codable, Equatable {

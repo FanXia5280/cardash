@@ -219,10 +219,10 @@ struct AMapNavView: UIViewRepresentable {
                 }
             }
 
-            let key = "\(route.count)|\(segments.map { String($0.status) }.joined())"
-            if route.count != routeCount || key != segKey {
+            let segHash = "\(route.count)|\(segments.map { String($0.status) }.joined())"
+            if route.count != routeCount || segHash != segKey {
                 routeCount = route.count
-                segKey = key
+                segKey = segHash
                 var olds: [MAPolyline] = [line, lineBorder].compactMap { $0 }
                 olds.append(contentsOf: segLines)
                 for o in olds { view.remove(o) }
