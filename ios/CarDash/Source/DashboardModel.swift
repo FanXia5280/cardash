@@ -29,6 +29,8 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var routeDest: CLLocationCoordinate2D?
     /// 已经算过路线的那份目的地，用来去重
     private var routedKey: String?
+    /// 测试用：手动塞的假目的地。正式版可以连这块一起删掉。
+    @Published private(set) var mockDest: Dest?
 
     // MARK: - 设置
     @Published var host: String {
@@ -393,7 +395,8 @@ final class DashboardModel: ObservableObject {
     ///   - 路线用系统的 MKDirections：不需要 key、不依赖第三方服务。
     ///     画到地图上是高德那种蓝色路线，视觉和车机一致。
     private func replanRoute() {
-        guard let dest = car?.dest else {
+        // 测试按钮塞的假目的地优先；清掉就回落到车机真实数据
+        guard let dest = mockDest ?? car?.dest else {
             if !route.isEmpty || routeDest != nil {
                 route = []
                 routeDest = nil
@@ -495,6 +498,29 @@ final class DashboardModel: ObservableObject {
                 done(pts)
             }
         }
+    }
+
+    // MARK: - 测试：模拟车机报目的地
+
+    /// 在当前位置东北方向约 3 公里放一个假目的地。
+    /// 坐标要生成成 **GCJ-02** —— 车机报上来的就是火星坐标，
+    /// resolveDestination 会按 GCJ-02 转回 WGS-84，得保持一致。
+    func sendMockDestination() {
+        guard let c = coord else { return }
+        let g = ChinaCoord.toGcj(c)
+        let dLat = 3.0 / 111.0
+        let dLon = 3.0 / (111.0 * cos(c.latitude * .pi / 180))
+        mockDest = Dest(name: "测试目的地",
+                        lat: g.latitude + dLat,
+                        lon: g.longitude + dLon)
+        routedKey = nil
+        replanRoute()
+    }
+
+    func clearMockDestination() {
+        mockDest = nil
+        routedKey = nil
+        replanRoute()
     }
 
     /// 拿到目的地的 WGS-84 坐标：有坐标先转坐标系，只有名字就地理编码。

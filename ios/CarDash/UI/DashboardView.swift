@@ -53,12 +53,16 @@ struct DashboardView: View {
                     //   横屏 → 压左边（速度在左边）
                     //   竖屏 → 压上边（速度在上方），到中段就淡出，
                     //          下面整块留给地图和路线
+                    // 多加几段 stop，让渐变是「慢慢淡下去」而不是「很快就没」，
+                    // 参考图那种自然的压暗就是这个差别
                     if geo.size.height > geo.size.width {
                         LinearGradient(
                             stops: [
-                                .init(color: .black.opacity(0.62), location: 0.00),
-                                .init(color: .black.opacity(0.30), location: 0.18),
-                                .init(color: .black.opacity(0.00), location: 0.46),
+                                .init(color: .black.opacity(0.72), location: 0.00),
+                                .init(color: .black.opacity(0.56), location: 0.22),
+                                .init(color: .black.opacity(0.34), location: 0.45),
+                                .init(color: .black.opacity(0.14), location: 0.60),
+                                .init(color: .black.opacity(0.00), location: 0.76),
                             ],
                             startPoint: .top, endPoint: .bottom
                         )
@@ -67,9 +71,11 @@ struct DashboardView: View {
                     } else {
                         LinearGradient(
                             stops: [
-                                .init(color: .black.opacity(0.62), location: 0.00),
-                                .init(color: .black.opacity(0.30), location: 0.20),
-                                .init(color: .black.opacity(0.00), location: 0.52),
+                                .init(color: .black.opacity(0.72), location: 0.00),
+                                .init(color: .black.opacity(0.56), location: 0.24),
+                                .init(color: .black.opacity(0.32), location: 0.48),
+                                .init(color: .black.opacity(0.13), location: 0.64),
+                                .init(color: .black.opacity(0.00), location: 0.80),
                             ],
                             startPoint: .leading, endPoint: .trailing
                         )
@@ -88,16 +94,6 @@ struct DashboardView: View {
                     .padding(.top, k * 12)
                     .padding(.bottom, k * 10)
                     .frame(width: geo.size.width, height: geo.size.height)
-
-                    // ── 视距控制：贴右缘、竖直居中（高德那种 +/− 比例尺）──
-                    ZoomControl(zoom: zoom, scale: k) {
-                        zoom = min(19, zoom + 1)
-                    } onZoomOut: {
-                        zoom = max(12, zoom - 1)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: .trailing)
-                    .padding(.trailing, k * 8)
 
                     // 浮出来的设置按钮
                     if showSettingsButton {
@@ -152,6 +148,7 @@ struct DashboardView: View {
             // ── 顶栏：左上日期时间 / 中间导航摘要 / 右上海拔 ──
             ZStack {
                 ClockPanel(scale: k)
+                    .frame(height: k * 34, alignment: .center)
                     .hudCard(k)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -164,6 +161,7 @@ struct DashboardView: View {
                     .padding(.top, k * 4)
 
                 AltitudePanel(altitude: model.displayAltitude, scale: k)
+                    .frame(height: k * 34, alignment: .center)
                     .hudCard(k)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -189,7 +187,13 @@ struct DashboardView: View {
                                   range: model.displayRange,
                                   scale: k)
                     .hudCard(k)
-                Spacer(minLength: 12)
+                Spacer(minLength: 10)
+                ZoomPill(zoom: zoom, scale: k) {
+                    zoom = min(19, zoom + 1)
+                } onZoomOut: {
+                    zoom = max(12, zoom - 1)
+                }
+                Spacer(minLength: 10)
                 GearOdometerPanel(gear: model.displayGear,
                                   odometer: model.displayOdometer,
                                   scale: k)
@@ -208,9 +212,13 @@ struct DashboardView: View {
         VStack(spacing: 0) {
             // ── 顶栏：日期时间 / 海拔 ──
             HStack(alignment: .top) {
-                ClockPanel(scale: k).hudCard(k)
+                ClockPanel(scale: k)
+                    .frame(height: k * 34, alignment: .center)
+                    .hudCard(k)
                 Spacer(minLength: 8)
-                AltitudePanel(altitude: model.displayAltitude, scale: k).hudCard(k)
+                AltitudePanel(altitude: model.displayAltitude, scale: k)
+                    .frame(height: k * 34, alignment: .center)
+                    .hudCard(k)
             }
 
             // ── 导航摘要：还有多久 / 多远 / 几点到 ──
@@ -238,10 +246,18 @@ struct DashboardView: View {
                                   range: model.displayRange,
                                   scale: k)
                     .hudCard(k)
-                GearOdometerPanel(gear: model.displayGear,
-                                  odometer: model.displayOdometer,
-                                  scale: k)
-                    .hudCard(k)
+                HStack {
+                    GearOdometerPanel(gear: model.displayGear,
+                                      odometer: model.displayOdometer,
+                                      scale: k)
+                        .hudCard(k)
+                    Spacer(minLength: 8)
+                    ZoomPill(zoom: zoom, scale: k) {
+                        zoom = min(19, zoom + 1)
+                    } onZoomOut: {
+                        zoom = max(12, zoom - 1)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -263,29 +279,42 @@ struct DashboardView: View {
 
 // MARK: - 视距（缩放）控制
 
-/// 对应高德导航里那个「50米 / 100米 / 200米」的 +/− 比例尺缩放。
+/// 对应高德导航里那个「50米 / 100米 / 200米」的视距缩放。
 /// 直接调 MAMapView.zoomLevel（高德官方 API），越大越近。
-private struct ZoomControl: View {
+/// 做成一条横向胶囊，样式和其它 HUD 卡一致，不突兀。
+private struct ZoomPill: View {
     let zoom: Int
     let scale: CGFloat
     let onZoomIn: () -> Void
     let onZoomOut: () -> Void
 
     var body: some View {
-        VStack(spacing: scale * 5) {
-            ZoomStepButton(icon: "plus", scale: scale, action: onZoomIn)
+        HStack(spacing: scale * 12) {
+            Button(action: onZoomOut) {
+                Image(systemName: "minus")
+                    .font(.system(size: scale * 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: scale * 26, height: scale * 26)
+                    .background(Circle().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
 
-            Text(ZoomControl.scaleLabel(zoom))
-                .font(.system(size: scale * 11, weight: .semibold, design: .rounded))
+            Text(ZoomPill.scaleLabel(zoom))
+                .font(.system(size: scale * 13, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.white.opacity(0.92))
-                .padding(.horizontal, scale * 8)
-                .padding(.vertical, scale * 3)
-                .background(Capsule().fill(Color.black.opacity(0.42)))
+                .frame(minWidth: scale * 46)
 
-            ZoomStepButton(icon: "minus", scale: scale, action: onZoomOut)
+            Button(action: onZoomIn) {
+                Image(systemName: "plus")
+                    .font(.system(size: scale * 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: scale * 26, height: scale * 26)
+                    .background(Circle().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
         }
-        .shadow(color: .black.opacity(0.3), radius: 6, y: 2)
+        .hudCard(scale)
     }
 
     /// zoomLevel → 比例尺文案。高德的尺子随 zoom 走，近似值够用。
@@ -301,24 +330,6 @@ private struct ZoomControl: View {
         case 19: return "25米"
         default: return "\(zoom)"
         }
-    }
-}
-
-private struct ZoomStepButton: View {
-    let icon: String
-    let scale: CGFloat
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: scale * 15, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.9))
-                .frame(width: scale * 36, height: scale * 36)
-                .background(Circle().fill(Color.black.opacity(0.48)))
-                .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
     }
 }
 

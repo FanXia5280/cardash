@@ -66,6 +66,18 @@ struct SettingsSheet: View {
                 }
 
                 Section {
+                    Button("模拟一条导航路线") { model.sendMockDestination() }
+                    Button("清除模拟路线", role: .destructive) {
+                        model.clearMockDestination()
+                    }
+                } header: {
+                    Text("测试（正式版会移除）")
+                } footer: {
+                    Text("在当前位置东北方向约 3 公里放一个假目的地，"
+                         + "看路线画出来什么样。点「清除」恢复车机真实数据。")
+                }
+
+                Section {
                     Toggle("使用高德地图底图", isOn: $useAmapTiles)
                 } header: {
                     Text("地图")
