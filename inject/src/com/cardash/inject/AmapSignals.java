@@ -141,6 +141,11 @@ public final class AmapSignals {
         // 诊断信息，绝不写进 hub.speedKmh。
         if (speed >= 0) hub.setSource("amapSpeed", String.valueOf(speed) + "（仅诊断，不采用）");
 
+        // 限速：车机高德广播里本来就有（LIMITED_SPEED）。以前只记诊断没下发，
+        // 现在给 iPhone 用 —— 它拿这个跟车速比，超速就两边冒红
+        // （高德 SDK 那个 showOverSpeedPulse 是收费接口，我们自己做一份不依赖它）。
+        // 0 = 当前路段没有限速（高德约定），所以 0 要当成"清空"，别留着上一段的限速。
+        if (limit >= 0) hub.speedLimit = (limit > 0) ? Integer.valueOf(limit) : null;
         if (limit > 0) hub.setSource("limit", String.valueOf(limit));
         if (lights >= 0) hub.setSource("lights", String.valueOf(lights));
 

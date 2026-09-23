@@ -43,6 +43,35 @@ public final class StateHub {
     /** 车机是否已点火（部分信号只在点火后上报） */
     public volatile Boolean ignition;
 
+    /**
+     * 当前路段限速（km/h），来自车机高德引导广播的 LIMITED_SPEED。
+     * null = 未知/当前路段没有限速。iPhone 拿它和车速比 → 超速就两边冒红。
+     */
+    public volatile Integer speedLimit;
+
+    // ── 转向灯（左右分开 + 合并状态，三个槽位，见 turnValue 的归一化）──
+    /** 左转向灯亮着吗（null = 这个别名没在推数据） */
+    public volatile Boolean turnLeft;
+    /** 右转向灯亮着吗 */
+    public volatile Boolean turnRight;
+    /** 合并状态（D.apk 的「灯光 / 转向灯状态」原值，可能是 0/1/2/3 枚举） */
+    public volatile Integer turnStatus;
+
+    /**
+     * 归一化转向灯：**0=灭 1=左 2=右 3=双闪**，null = 完全没数据（iPhone 就别显示）。
+     *
+     * 为什么在这里算而不是在采集端：左灯、右灯是两个独立别名，到达顺序不定
+     * （左灯先推 0、右灯后推 1）。分开存、最后统一算，结果才与顺序无关。
+     */
+    public Integer turnValue() {
+        if (turnStatus != null) return turnStatus;
+        if (Boolean.TRUE.equals(turnLeft) && Boolean.TRUE.equals(turnRight)) return 3;
+        if (Boolean.TRUE.equals(turnLeft)) return 1;
+        if (Boolean.TRUE.equals(turnRight)) return 2;
+        if (turnLeft != null || turnRight != null) return 0;
+        return null;
+    }
+
     // ── 音乐 ──
     public volatile String mTitle;
     public volatile String mArtist;
@@ -153,6 +182,12 @@ public final class StateHub {
         b.append(",\"range\":").append(Json.num(rangeKm));
         b.append(",\"odometer\":").append(Json.num(odometerKm));
         b.append(",\"altitude\":").append(Json.num(altitudeM));
+        // 限速 → iPhone 自己算超速（两边冒红）；转向灯 → 两边闪绿光
+        Integer turn = turnValue();
+        b.append(",\"limit\":").append(Json.num(
+                speedLimit == null ? null : speedLimit.doubleValue()));
+        b.append(",\"turn\":").append(Json.num(
+                turn == null ? null : turn.doubleValue()));
 
         b.append(",\"music\":");
         if (mTitle != null || mArtist != null) {

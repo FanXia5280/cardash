@@ -382,6 +382,30 @@ final class DashboardModel: ObservableObject {
         carFresh ? car?.gear : nil
     }
 
+    /// 转向灯：0=灭 1=左 2=右 3=双闪。nil = 车机没这个数据（旧版车机 APK）。
+    var displayTurn: Int? {
+        carFresh ? car?.turn : nil
+    }
+
+    /// 当前路段限速（车机高德广播给的）。0/缺省都当"不知道"。
+    var displayLimit: Int? {
+        if carFresh, let l = car?.limit, l > 0 { return l }
+        return nil
+    }
+
+    /// 超速了吗？
+    ///
+    /// **自己算**，不用高德 SDK 的 `showOverSpeedPulse` ——
+    /// 那个头文件里写明是**收费接口**（要提工单向高德申请），
+    /// 而车机高德的广播里本来就带限速，拿来比一下就有了。
+    ///
+    /// 留 2km/h 容差：GPS 车速和仪表本身有偏差，贴着限速跑不该一直报警。
+    /// 限速未知时一律 false —— 宁可不报，绝不误报。
+    var isOverspeed: Bool {
+        guard let l = displayLimit, let s = displaySpeed else { return false }
+        return s > Double(l) + 2
+    }
+
     var displaySoc: Double? {
         carFresh ? car?.soc : nil
     }

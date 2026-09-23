@@ -37,6 +37,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- 放开 ProMotion 的 120Hz 上限。iOS 默认把 App 的绘制锁在 60Hz，
+	     加上这个键、且在支持 ProMotion 的机器上，才会跑到 120Hz
+	     （用户反馈地图帧率低）。机器本身不支持 ProMotion 的话仍是 60Hz，改不了。 -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 

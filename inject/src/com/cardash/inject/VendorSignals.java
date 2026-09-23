@@ -52,6 +52,20 @@ public final class VendorSignals {
     private static final String A_TIRE_FL    = "vc_alias_tire_pressure";
 
     /**
+     * 转向灯。三个候选都读（名字来自 D.apk 的 Aliases 表 ＋ 字符串池里的中文名
+     * 「灯光 / 转向灯状态」），哪个有值用哪个：
+     *   Light/TurnLightStatus = 合并状态（中文名就是「转向灯状态」，最可能）
+     *   Light/TurnLeft/Right  = 左右分开（含义无歧义，用来兜底、也用来交叉验证）
+     *
+     * ⚠️ 写这段时车不在手边，**取值形态没在真车上验证过**（可能是 0/1/2/3 枚举，
+     * 也可能是布尔）。所以三个都读、原始值都记进诊断，归一化写得宽容，
+     * 上车后看一眼 iPhone 设置页的 `turnRaw` 就能校准。
+     */
+    private static final String A_TURN       = "Light/TurnLightStatus";
+    private static final String A_TURN_L     = "Light/TurnLeft";
+    private static final String A_TURN_R     = "Light/TurnRight";
+
+    /**
      * 续航候选别名，按优先级从高到低。
      *
      * 车机会推好几个续航：left_ev_dte / edte / e_dte / disp_dte。
@@ -85,6 +99,7 @@ public final class VendorSignals {
     private static final String[] PROBE = {
             A_SPEED, A_GEAR, "vc_alias_journey_all_distance",
             A_RANGE, "vc_alias_disp_dte", "vc_alias_e_dte", A_DRIVE,
+            A_TURN, A_TURN_L, A_TURN_R,
     };
 
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:\\.\\d+)?");
@@ -659,7 +674,64 @@ public final class VendorSignals {
             hub.setSource("gear", "vendor:" + alias);
             return true;
         }
+        if (A_TURN.equals(alias) || A_TURN_L.equals(alias) || A_TURN_R.equals(alias)) {
+            return applyTurn(hub, alias, raw);
+        }
         return false;
+    }
+
+    /**
+     * 转向灯：把原始值写进 StateHub 的三个槽位（左灯 / 右灯 / 合并状态）。
+     *
+     * 归一化成「0=灭 1=左 2=右 3=双闪」这一步**不在这里做**，而是放在
+     * StateHub.turnValue() 里算 —— 因为左灯和右灯是两个独立的别名，
+     * 分开到达（左灯先推 0、右灯后推 1）时如果在这里就归一化，
+     * 后到的「0」会把先到的方向覆盖掉。分开存、最后算，才与到达顺序无关。
+     */
+    private static boolean applyTurn(StateHub hub, String alias, Object raw) {
+        hub.setSource("turnRaw", alias + "=" + String.valueOf(raw));
+        if (A_TURN_L.equals(alias)) {
+            Boolean b = turnBool(raw);
+            if (b == null) return false;
+            hub.turnLeft = b;
+            return true;
+        }
+        if (A_TURN_R.equals(alias)) {
+            Boolean b = turnBool(raw);
+            if (b == null) return false;
+            hub.turnRight = b;
+            return true;
+        }
+        Double d = num(raw);
+        if (d != null) {
+            hub.turnStatus = d.intValue();
+            return true;
+        }
+        Boolean b = turnBool(raw);
+        if (b != null) {
+            hub.turnStatus = b ? 3 : 0;      // 布尔形态当「双闪/灭」
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 宽松布尔：true / 1 / "1" / "true" / "on" 都算真；false / 0 / "off" / "no" 算假。
+     * 取不出来返回 null（表示"这个别名没在推数据"，不能用它判断灯灭）。
+     */
+    private static Boolean turnBool(Object raw) {
+        if (raw == null) return null;
+        if (raw instanceof Boolean) return (Boolean) raw;
+        if (raw instanceof Number) return ((Number) raw).doubleValue() != 0;
+        String s = String.valueOf(raw).trim();
+        if (s.isEmpty() || "null".equalsIgnoreCase(s)) return null;
+        try {
+            return Double.parseDouble(s) != 0;
+        } catch (Throwable ignored) {
+            // 不是数字，按字符串判断
+        }
+        String t = s.toLowerCase(java.util.Locale.ROOT);
+        return !(t.startsWith("false") || t.startsWith("off") || t.startsWith("no"));
     }
 
     // ─────────────────────────────────────── 续航 / 总里程的候选与量纲

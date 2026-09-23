@@ -55,23 +55,71 @@ struct RootView: View {
 /// 所以第一帧往往是"车在正中"，随后才挪到该在的位置 —— 直接看就是地图先顿一下
 /// 再滑一下。用遮罩把这段藏掉，用户看到的就是"打开即到位"。
 struct LaunchOverlay: View {
+    /// 外圈一直在转、车标在呼吸（用户要求「循环绘制」）
+    @State private var spin = false
+    @State private var breathe = false
+
     var body: some View {
         ZStack {
             Color(hex: 0x0B0D10).ignoresSafeArea()
-            VStack(spacing: 12) {
+            VStack(spacing: 14) {
+                emblem
                 Text("CarDash")
-                    .font(.system(size: 32, weight: .semibold, design: .rounded))
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.95))
                 Text("正在初始化地图与定位")
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.45))
-                ProgressView()
-                    .tint(.white.opacity(0.55))
-                    .padding(.top, 4)
             }
         }
         // 挡住底下的误触（比如"模拟导航"按钮正好在手指落点）
         .contentShape(Rectangle())
         .allowsHitTesting(true)
+        .onAppear {
+            // 循环动画：遮罩还在就一直转
+            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                spin = true
+            }
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
+                breathe = true
+            }
+        }
+    }
+
+    /// 中间那个标：外圈转 + 车标呼吸
+    private var emblem: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                .frame(width: 86, height: 86)
+            Circle()
+                .trim(from: 0, to: 0.20)
+                .stroke(Color(hex: 0x2E7BE8),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .frame(width: 86, height: 86)
+                .rotationEffect(.degrees(spin ? 360 : 0))
+            logo
+        }
+        .opacity(breathe ? 1 : 0.78)
+    }
+
+    /// 车标。
+    ///
+    /// ⚠️ 现在 App 里**没有任何图片资源**（连 Assets.xcassets 都没有），
+    /// 所以先用一个箭头占位。深蓝车标的 PNG 一旦放进 Assets（名字叫
+    /// `DeepalLogo`），这里自动就换成真车标了 —— 代码不用改。
+    /// （用户的车机包里有车标图，但资源名被混淆成 res/jf.webp 这种，认不出来。）
+    @ViewBuilder
+    private var logo: some View {
+        if let img = UIImage(named: "DeepalLogo") {
+            Image(uiImage: img)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+        } else {
+            Image(systemName: "arrowtriangle.up.fill")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundStyle(Color(hex: 0x2E7BE8))
+        }
     }
 }

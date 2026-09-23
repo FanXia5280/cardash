@@ -110,6 +110,20 @@ struct DashboardView: View {
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
 
+                    // ── 屏幕两边那两条光 ──
+                    // 超速→红、转向灯→绿，数值都是我们自己算的（见 DashboardModel
+                    // 的 isOverspeed / displayTurn 与 EdgeGlow 的说明）。
+                    // 放在 HUD 下面、地图上面，不挡任何操作。
+                    if model.isOverspeed {
+                        EdgeGlow(kind: .over, left: true, right: true, scale: k)
+                            .ignoresSafeArea()
+                    }
+                    if let t = model.displayTurn, t == 1 || t == 2 || t == 3 {
+                        // 1=左（只闪左边）2=右（只闪右边）3=双闪（两边一起）
+                        EdgeGlow(kind: .turn, left: t != 2, right: t != 1, scale: k)
+                            .ignoresSafeArea()
+                    }
+
                     Group {
                         if geo.size.height > geo.size.width {
                             portraitLayout(k: k)
@@ -358,5 +372,59 @@ private struct LinkBadge: View {
         .onAppear {
             withAnimation(.easeInOut(duration: 0.6).delay(4)) { visible = false }
         }
+    }
+}
+
+// MARK: - 屏幕两边的光（转向绿 / 超速红）
+
+/// 屏幕左右两条边缘光。
+///
+/// * **转向灯（绿）**：跟着车机转向灯闪（约 1.5Hz，和真车一个节奏）——
+///   左灯亮只闪左边，右灯亮只闪右边，双闪两边一起。
+/// * **超速（红）**：车速超过当前路段限速时两边同时呼吸。
+///
+/// 为什么自己画：高德的 `showOverSpeedPulse` 头文件里写明是**收费接口**
+/// （要提工单向高德申请），而且它只画在导航视图内部；转向灯更是 SDK
+/// 完全没有的数据。这层只是叠在 HUD 上的装饰，`allowsHitTesting(false)`，
+/// 不吃手势、不影响地图。
+struct EdgeGlow: View {
+    enum Kind { case turn, over }
+
+    let kind: Kind
+    let left: Bool
+    let right: Bool
+    let scale: CGFloat
+
+    @State private var lit = false
+
+    var body: some View {
+        let color: Color = (kind == .turn) ? Color(hex: 0x2BE05A) : Color(hex: 0xFF3B30)
+        // 转向灯是"闪"，超速是"呼吸"（慢一点，别晃眼）
+        let period: Double = (kind == .turn) ? 0.34 : 0.75
+
+        ZStack {
+            if left { edge(color, isLeft: true) }
+            if right { edge(color, isLeft: false) }
+        }
+        .opacity(lit ? 1 : 0.06)
+        .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(.easeInOut(duration: period).repeatForever(autoreverses: true)) {
+                lit = true
+            }
+        }
+    }
+
+    /// 一条从边缘往里淡出的光带
+    private func edge(_ color: Color, isLeft: Bool) -> some View {
+        LinearGradient(
+            colors: [color.opacity(0.92), color.opacity(0.0)],
+            startPoint: isLeft ? .leading : .trailing,
+            endPoint: isLeft ? .trailing : .leading
+        )
+        .frame(width: max(60, 96 * scale))
+        .blur(radius: 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity,
+               alignment: isLeft ? .leading : .trailing)
     }
 }

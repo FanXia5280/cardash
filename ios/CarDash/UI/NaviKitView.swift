@@ -57,6 +57,22 @@ struct NaviKitNavView: UIViewRepresentable {
         // 文档原话：showScale 只在 showUIElements = NO 时才可设 —— 正好符合。
         v.showScale = false
 
+        // ── 路线上显示什么（用户 2026-09-24 提的几条，全照头文件的默认值/开关来）──
+        // ⚠️ 头文件原话：下面这些开关大多**默认 NO** ——"没显示"不是 bug，是没开。
+        // 1) 走过的路置灰：头文件「走过的路线是否置灰, 默认为 NO」
+        //    ← 用户说"跑过的路不灰、还是绿的"，就是这个没开
+        v.showGreyAfterPass = true
+        // 2) 电子眼：showCamera 默认 YES，但**距离**默认 NO
+        v.showCamera = true
+        v.showCameraDistance = true
+        // 3) 红绿灯：图标默认 YES；倒计时（showTrafficLightView）头文件写明是
+        //    **收费接口**（"开启付费权限时默认为YES"）—— 有权限就白赚，没权限它不画
+        v.showTrafficLights = true
+        v.showTrafficLightView = true
+        // 4) 超速脉冲：头文件「默认为 NO。特别注意：当前接口为收费接口」
+        //    收费的先开着；同时 iPhone 那边用限速自己算了一份红色边缘光，不依赖它
+        v.showOverSpeedPulse = true
+
         // ── 日夜模式：按日出日落自动切换 ──
         // AMapNaviDriveView.mapViewModeType，枚举定义在 AMapNaviCommonObj.h：
         //   0 = Day   1 = Night   2 = DayNightAuto（按日出日落自动）   3 = Custom

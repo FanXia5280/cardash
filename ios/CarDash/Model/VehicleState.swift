@@ -17,6 +17,13 @@ struct CarSnapshot: Codable, Equatable {
     var odometer: Double?
     /// 海拔 m
     var altitude: Double?
+    /// 当前路段限速 km/h（车机高德广播的 LIMITED_SPEED，Android 侧见 AmapSignals）。
+    /// 用它跟车速比 → 超速时两边冒红（高德 SDK 的 showOverSpeedPulse 是收费接口，
+    /// 我们自己算一份，不依赖它）。
+    var limit: Int?
+    /// 转向灯：0=灭 1=左 2=右 3=双闪（车机车身信号，见 VendorSignals.applyTurn）。
+    /// 老版本车机 APK 不发这个字段 → nil → 不显示，不报错。
+    var turn: Int?
     var music: MusicState?
     var nav: NavState?
     /// 各字段的来源，用于排查（vhal / none 等）
