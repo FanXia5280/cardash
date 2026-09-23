@@ -172,7 +172,6 @@ struct AMapNavView: UIViewRepresentable {
     final class Coordinator: NSObject, MAMapViewDelegate {
 
         private var line: MAPolyline?
-        private var lineBorder: MAPolyline?
         private var segLines: [MAPolyline] = []
         private var segStatus: [Int] = []
         private var routeCount = -1
@@ -223,11 +222,10 @@ struct AMapNavView: UIViewRepresentable {
             if route.count != routeCount || segHash != segKey {
                 routeCount = route.count
                 segKey = segHash
-                var olds: [MAPolyline] = [line, lineBorder].compactMap { $0 }
+                var olds: [MAPolyline] = [line].compactMap { $0 }
                 olds.append(contentsOf: segLines)
                 for o in olds { view.remove(o) }
                 line = nil
-                lineBorder = nil
                 segLines = []
                 segStatus = []
 
@@ -236,13 +234,11 @@ struct AMapNavView: UIViewRepresentable {
                     // 所以这里还是要转一道
                     let pts = route.map { p -> CLLocationCoordinate2D in ChinaCoord.toGcj(p) }
 
-                    // 1) 白底（最下层）—— 高德导航那条路的白边
-                    var b = pts
-                    let border = MAPolyline(coordinates: &b, count: UInt(pts.count))
-                    lineBorder = border
-                    view.add(border)
-
-                    // 2) 按路况分段着色（绿/黄/红），高德 tmcs 的 status
+                    // 按路况分段着色（绿/黄/红），高德 tmcs 的 status。
+                    // ⚠️ 不画白底！之前白底线和彩线是同层 overlay，
+                    // 高德的渲染顺序不保证，白线可能盖在彩线上面 ——
+                    // 整条路就成了白色、只剩两条绿边（上一版正是这样）。
+                    // 高德原版就是单层 is3DArrowLine：彩色主体 + 白色路缘。
                     for seg in segments {
                         let g = seg.points.map { p -> CLLocationCoordinate2D in ChinaCoord.toGcj(p) }
                         guard g.count >= 2 else { continue }
@@ -293,34 +289,26 @@ struct AMapNavView: UIViewRepresentable {
             guard let l = overlay as? MAPolyline else { return nil }
             let r = MAPolylineRenderer(polyline: l)
 
-            if l === lineBorder {
-                // 白边
-                r?.strokeColor = UIColor(red: 0.93, green: 0.97, blue: 1.0, alpha: 0.95)
-                r?.lineWidth = 15
-                return r
-            }
-
+            // 高德原版路线 = 彩色粗主体 + 白色路缘 + 路面箭头。
+            // is3DArrowLine 的含义：strokeColor 是主体色，sideColor 是两侧路缘，
+            // 箭头纹理是 SDK 自动印上去的（浅色，和高德一致）。
+            // 全部单层，绝不叠第二根线。
+            let main: UIColor
             if let idx = segLines.firstIndex(where: { $0 === l }) {
-                // 高德路况配色（绿=畅通 黄=缓行 红=拥堵 暗红=严重拥堵）
-                let c: UIColor
+                // 高德路况配色：绿=畅通 黄=缓行 红=拥堵 暗红=严重拥堵
                 switch segStatus[idx] {
-                case 1:  c = UIColor(red: 1.00, green: 0.72, blue: 0.00, alpha: 1.0)
-                case 2:  c = UIColor(red: 1.00, green: 0.38, blue: 0.16, alpha: 1.0)
-                case 3:  c = UIColor(red: 0.75, green: 0.05, blue: 0.05, alpha: 1.0)
-                default: c = UIColor(red: 0.10, green: 0.75, blue: 0.42, alpha: 1.0)
+                case 1:  main = UIColor(red: 1.00, green: 0.70, blue: 0.00, alpha: 1.0)
+                case 2:  main = UIColor(red: 1.00, green: 0.32, blue: 0.10, alpha: 1.0)
+                case 3:  main = UIColor(red: 0.76, green: 0.05, blue: 0.05, alpha: 1.0)
+                default: main = UIColor(red: 0.00, green: 0.76, blue: 0.35, alpha: 1.0)
                 }
-                r?.strokeColor = c
-                r?.lineWidth = 11
-                r?.is3DArrowLine = true
-                r?.sideColor = UIColor(red: 0.93, green: 0.97, blue: 1.0, alpha: 0.95)
-                return r
+            } else {
+                main = UIColor(red: 0.16, green: 0.56, blue: 1.0, alpha: 1.0)   // 兜底蓝
             }
-
-            // 兜底主路线
-            r?.strokeColor = UIColor(red: 0.18, green: 0.58, blue: 1.0, alpha: 0.98)
-            r?.lineWidth = 11
+            r?.strokeColor = main
+            r?.lineWidth = 20
             r?.is3DArrowLine = true
-            r?.sideColor = UIColor(red: 0.93, green: 0.97, blue: 1.0, alpha: 0.95)
+            r?.sideColor = UIColor(red: 0.97, green: 1.0, blue: 1.0, alpha: 1.0)
             return r
         }
 
