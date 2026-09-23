@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import CoreLocation
 
 #if canImport(AMapNaviKit)
@@ -134,6 +135,65 @@ enum DayNight {
     }
 }
 
+// MARK: - 车头在屏幕上的位置（导航态 / 非导航态共用）
+
+/// 地图里「车头 / 当前位置」该落在屏幕的哪儿（0~1，(0,0) 左上、(1,1) 右下）。
+///
+///   - **横屏**：往右挪 —— 左边是大号车速数字（参考图也是车顶偏右，左半屏留给 HUD）
+///   - **竖屏**：往下挪 —— 车速数字就在车头正上方，居中的话会压住车头前的路线
+///
+/// ⚠️ **导航态（AMapNaviDriveView.screenAnchor）和非导航态（AMapNavView 自己反算偏移）
+/// 必须用这一组值** —— 用户明确要求两种状态的位置同步，别再各写一份。
+enum MapAnchor {
+    static let landscape = CGPoint(x: 0.64, y: 0.50)
+    static let portrait  = CGPoint(x: 0.50, y: 0.66)
+
+    static func of(size: CGSize) -> CGPoint {
+        size.height > size.width ? portrait : landscape
+    }
+}
+
+// MARK: - 高德 SDK 自带图标
+
+/// 从高德 SDK 的资源包里取官方图标。
+///
+/// 为什么要偷它的图：导航态那个自车图标（蓝圈 + 白箭头）是导航引擎内部渲染的，
+/// 非导航态用的是 MAMapView + 自己维护的 Annotation（这是官方文档给巡航 UI 的方案），
+/// 想让两边的车标长得一样，只能用 SDK 自带的同一张图 —— 它就在 AMapNavi.bundle 里。
+///
+/// 取不到就返回 nil，调用方退回自绘箭头，**不会崩**。
+enum AmapBundle {
+
+    /// 官方自车图标（导航态用的那张 256px 图，缩到 42pt）
+    static let carIcon: UIImage? = scaled("engine/eyrieImage/compass_car_256@3x.webp", to: 42)
+
+    private static func scaled(_ rel: String, to side: CGFloat) -> UIImage? {
+        for base in basePaths() {
+            let p = base + "/AMapNavi.bundle/" + rel
+            if let img = UIImage(contentsOfFile: p) {
+                let t = CGSize(width: side, height: side)
+                let fmt = UIGraphicsImageRendererFormat.default()
+                fmt.opaque = false
+                return UIGraphicsImageRenderer(size: t, format: fmt).image { _ in
+                    img.draw(in: CGRect(origin: .zero, size: t))
+                }
+            }
+        }
+        return nil
+    }
+
+    /// CocoaPods 用 use_frameworks! 时资源在 App 里的 AMapNaviKit.framework 内；
+    /// 有的集成方式会把它拷到 App 根目录 —— 两种都试一遍。
+    private static func basePaths() -> [String] {
+        var out: [String] = []
+        if let fw = Bundle.main.privateFrameworksPath {
+            out.append(fw + "/AMapNaviKit.framework")
+        }
+        out.append(Bundle.main.bundlePath)
+        return out
+    }
+}
+
 // MARK: - 高德矢量地图
 
 #if canImport(AMapNaviKit)
@@ -169,10 +229,11 @@ struct AMapNavView: UIViewRepresentable {
 
         let v = MAMapView(frame: .zero)
         v.delegate = context.coordinator
-        // 高德原版标准样式，**白天/夜间跟着时间自动切**（见 DayNight）。
-        // ⚠️ 这里以前写死 .standard（用户反馈：晚上也是白花花的一片），
-        // 更早还写死过 .standardNight（用户又说太黑）—— 两边都别写死。
-        v.mapType = DayNight.isNight() ? .standardNight : .standard
+        // ⚠️ 用**导航样式**（MAMapTypeNavi / MAMapTypeNaviNight），不是普通样式：
+        // 非导航态要和导航态（AMapNaviDriveView）看起来一样，底图配色得同一套
+        //（普通夜间样式是蓝紫底 + 艳丽 POI 图标，和导航态那种灰黑底差很远）。
+        // 白天/夜间仍然跟着时间自动切（见 DayNight）。
+        v.mapType = DayNight.isNight() ? .naviNight : .navi
         // 实时路况（参考图里那些红黄绿的路段）
         v.isShowTraffic = true
         v.showsUserLocation = false
@@ -223,8 +284,9 @@ struct AMapNavView: UIViewRepresentable {
                     zoom: Int,
                     speed: Double?) {
 
-            // 日夜模式：过点（傍晚天黑了 / 早上天亮了）就换样式，不用重启 App
-            let wantType: MAMapType = DayNight.isNight() ? .standardNight : .standard
+            // 日夜模式：过点（傍晚天黑了 / 早上天亮了）就换样式，不用重启 App。
+            // 用**导航样式**，和导航态底图一致（见 makeUIView 里的说明）
+            let wantType: MAMapType = DayNight.isNight() ? .naviNight : .navi
             if view.mapType != wantType {
                 view.mapType = wantType
             }
@@ -246,8 +308,33 @@ struct AMapNavView: UIViewRepresentable {
             let key = "\(c.latitude),\(c.longitude),\(Int(heading))"
             if key != lastKey {
                 lastKey = key
+
+                // ── 把车放到屏幕的指定位置（和导航态的 screenAnchor 同步）──
+                // MAMapView 没有"自车图标位置"这种能力（它的 screenAnchor 是**缩放**
+                // 锚点，不是内容锚点），所以自己反算：先把中心放到车上，
+                // 再看「想让车出现的那个屏幕点」现在压着哪个坐标，把中心平移过去。
+                //
+                // ⚠️ 千万别退回 1.6.10 那种「把地图视图画大再 offset」的 hack：
+                // SwiftUI 会把超大的子视图摆在父视图**左上角**，于是左/上露出一条
+                // 地图没盖住的黑边（用户截图里说的「黑的断层」），落点也是错的。
                 view.centerCoordinate = c
-                view.rotationDegree = CGFloat(heading)   // 车头朝上
+                let w = view.bounds.width
+                let h = view.bounds.height
+                if w > 1, h > 1 {
+                    let a = MapAnchor.of(size: view.bounds.size)
+                    let at = view.convert(CGPoint(x: w * a.x, y: h * a.y),
+                                          toCoordinateFrom: view)
+                    let dLat = c.latitude - at.latitude
+                    let dLon = c.longitude - at.longitude
+                    // 偏移量必须小得合理 —— 地图还没渲染好时 convert 可能返回垃圾
+                    if abs(dLat) < 0.02, abs(dLon) < 0.02 {
+                        view.centerCoordinate = CLLocationCoordinate2D(
+                            latitude: c.latitude + dLat,
+                            longitude: c.longitude + dLon)
+                    }
+                }
+
+                view.rotationDegree = CGFloat(heading)   // 车头朝上（和导航态一致）
                 // 俯角交给动画，免得每秒硬跳一次看着卡
                 UIView.animate(withDuration: 0.9, delay: 0,
                                options: [.curveLinear, .beginFromCurrentState]) {
@@ -352,7 +439,7 @@ struct AMapNavView: UIViewRepresentable {
         func mapView(_ mapView: MAMapView!, viewFor annotation: MAAnnotation!) -> MAAnnotationView! {
             guard !(annotation is MAUserLocation) else { return nil }
 
-            // 车标：高德那种蓝色导航箭头
+            // 车标：优先用**高德官方那张**（和导航态同一个图标），取不到才自绘
             if annotation === carPin {
                 let id = "car"
                 var v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
@@ -360,11 +447,15 @@ struct AMapNavView: UIViewRepresentable {
                     v = MAAnnotationView(annotation: annotation, reuseIdentifier: id)
                 }
                 v?.annotation = annotation
-                let cfg = UIImage.SymbolConfiguration(pointSize: 30, weight: .bold)
-                v?.image = UIImage(systemName: "location.north.fill",
-                                   withConfiguration: cfg)?
-                    .withTintColor(UIColor(red: 0.10, green: 0.52, blue: 1.0, alpha: 1.0),
-                                  renderingMode: .alwaysOriginal)
+                if let official = AmapBundle.carIcon {
+                    v?.image = official
+                } else {
+                    let cfg = UIImage.SymbolConfiguration(pointSize: 30, weight: .bold)
+                    v?.image = UIImage(systemName: "location.north.fill",
+                                       withConfiguration: cfg)?
+                        .withTintColor(UIColor(red: 0.10, green: 0.52, blue: 1.0, alpha: 1.0),
+                                      renderingMode: .alwaysOriginal)
+                }
                 v?.centerOffset = .zero
                 return v
             }

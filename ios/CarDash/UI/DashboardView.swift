@@ -31,19 +31,15 @@ struct DashboardView: View {
             if let reason = model.mapUnavailableReason {
                 MapPlaceholder(reason: reason)
                     .ignoresSafeArea()
-            } else if amapAgreed {
-                // **不管有没有目的地，都用同一个高德导航视图**（用户要求：
-                // 「不要用两套系统」）。没目的地时引擎进巡航模式（见 NaviKitNavView），
-                // 有目的地就正常算路导航。
+            } else if let dest = model.routeDest, amapAgreed {
+                // 车机报了目的地：整屏交给高德官方导航视图。
+                // 原版路线、3D 车标、红绿灯倒计时、电子眼，全是 SDK 自带。
                 //
-                // 好处：底图配色/车标/日夜/遮罩接缝/锚点全一致；开始导航时**不用换
-                // view**，所以也不会再卡一下、闪一下北京。
-                //
-                // ⚠️ 上一版这里在"没有目的地"时用的是 MAMapView，并且套了一层
-                // 「把地图画大 1.35 倍再偏移」的 hack 来挪车头位置 —— 那个 hack
-                // 会在左/上露出**没被地图盖住的黑边**（用户截图里的「黑的断层」），
-                // 而且车头落点算错。**别再把它加回来。**
-                NaviKitNavView(from: model.coord, to: model.routeDest)
+                // ⚠️ 试过「没目的地时也用这个 view 靠巡航模式跟车」—— **不行**，
+                // 官方文档写明巡航只给数据、视图不跟车（实测停在默认位置＝北京）。
+                // 所以没目的地时回下面那套 MAMapView，但那边已经调成和这里同一套观感
+                // （`.naviNight` 底图 + 高德官方车标 + 同一组锚点）。
+                NaviKitNavView(from: model.coord, to: dest)
                     .ignoresSafeArea()
             } else {
                 // 兜底：用户没同意高德 SDK 的隐私协议时，只能用栅格/苹果地图。
