@@ -13,6 +13,12 @@ struct DashboardView: View {
     /// 地图底图：默认用高德（视觉和车机一致）。万一瓦片服务不通，
     /// 在设置里切回苹果即可 —— 不至于开天窗。
     @AppStorage("useAmapTiles") private var useAmapTiles = true
+    /// 用户有没有同意高德 SDK 的隐私协议。
+    /// 高德强制要求：没同意就去 new MAMapView 会拿到 nil（地图空白），
+    /// 所以没同意时退回栅格地图。
+    @AppStorage("amapPrivacyAgreed") private var amapAgreed = false
+    @AppStorage("amapPrivacyAsked") private var amapAsked = false
+    @State private var showPrivacy = false
 
     var body: some View {
         ZStack {
@@ -21,11 +27,12 @@ struct DashboardView: View {
                 MapPlaceholder(reason: reason)
                     .ignoresSafeArea()
             } else {
-                NavMapView(coord: model.coord,
-                           heading: model.heading,
-                           route: model.route,
-                           dest: model.routeDest,
-                           useAmapTiles: useAmapTiles)
+                DashboardMapView(coord: model.coord,
+                                 heading: model.heading,
+                                 route: model.route,
+                                 dest: model.routeDest,
+                                 amapAgreed: amapAgreed,
+                                 useRasterFallback: useAmapTiles)
                     // 地图**铺满整屏**。
                     // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
                     // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
@@ -87,6 +94,17 @@ struct DashboardView: View {
         .animation(.easeInOut(duration: 0.18), value: showSettingsButton)
         .sheet(isPresented: $showSettings) {
             SettingsSheet(model: model)
+        }
+        .sheet(isPresented: $showPrivacy) {
+            PrivacyConsentView { agreed in
+                amapAgreed = agreed
+                amapAsked = true
+                showPrivacy = false
+            }
+        }
+        .onAppear {
+            // 第一次启动问一次。同意才启用高德矢量地图。
+            if !amapAsked { showPrivacy = true }
         }
     }
 

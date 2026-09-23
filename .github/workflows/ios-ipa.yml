@@ -39,12 +39,27 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
+      - name: Install CocoaPods
+        working-directory: ios
+        run: |
+          # 高德 SDK 只能通过 CocoaPods 拿
+          gem install cocoapods --no-document || brew install cocoapods
+          pod --version
+
+      - name: Install pods
+        working-directory: ios
+        run: pod install
+
+      - name: Check workspace
+        working-directory: ios
+        run: test -d CarDash.xcworkspace && echo "workspace OK"
+
       - name: Build app (unsigned)
         working-directory: ios
         run: |
           set -o pipefail
           xcodebuild \
-            -project CarDash.xcodeproj \
+            -workspace CarDash.xcworkspace \
             -scheme CarDash \
             -configuration Release \
             -sdk iphoneos \

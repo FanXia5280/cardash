@@ -409,21 +409,90 @@ final class DashboardModel: ObservableObject {
 
         resolveDestination(dest) { [weak self] to in
             guard let self, let to else { return }
+
+            // 先走高德算路：和车机同源，路线能对得上
+            self.amapRoute(from: from, to: to) { pts in
+                if let pts {
+                    DispatchQueue.main.async {
+                        self.route = pts
+                        self.routeDest = to
+                    }
+                    return
+                }
+                // 高德不通（没网 / 配额用尽 / Key 不对）再退回系统算路
+                self.appleRoute(from: from, to: to) { pts in
+                    DispatchQueue.main.async {
+                        self.route = pts ?? []
+                        self.routeDest = to
+                    }
+                }
+            }
+        }
+    }
+
+    /// 高德驾车路径规划（Web 服务）。
+    ///
+    /// 用 **Web 平台**那个 Key —— 高德把「地图渲染」和「数据服务」拆成
+    /// 不同平台的 Key，iOS 平台那个拿去调算路接口是过不了校验的。
+    /// 返回的 polyline 是 GCJ-02，我们内部统一存 WGS-84，所以转一道。
+    private func amapRoute(from: CLLocationCoordinate2D,
+                           to: CLLocationCoordinate2D,
+                           done: @escaping ([CLLocationCoordinate2D]?) -> Void) {
+        let o = ChinaCoord.toGcj(from)
+        let d = ChinaCoord.toGcj(to)
+        var comp = URLComponents(string: "https://restapi.amap.com/v3/direction/driving")!
+        comp.queryItems = [
+            URLQueryItem(name: "origin", value: "\(o.longitude),\(o.latitude)"),
+            URLQueryItem(name: "destination", value: "\(d.longitude),\(d.latitude)"),
+            URLQueryItem(name: "extensions", value: "all"),
+            URLQueryItem(name: "strategy", value: "32"),   // 高德推荐（躲避拥堵+不走高速）
+            URLQueryItem(name: "key", value: AMapConfig.webKey),
+        ]
+        guard let url = comp.url else { done(nil); return }
+
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (obj["status"] as? String) == "1",
+                  let route = obj["route"] as? [String: Any],
+                  let paths = route["paths"] as? [[String: Any]],
+                  let steps = paths.first?["steps"] as? [[String: Any]]
+            else {
+                done(nil)
+                return
+            }
+            var wgs: [CLLocationCoordinate2D] = []
+            for s in steps {
+                guard let pl = s["polyline"] as? String else { continue }
+                for pair in pl.split(separator: ";") {
+                    let xy = pair.split(separator: ",")
+                    guard xy.count == 2,
+                          let lon = Double(xy[0]), let lat = Double(xy[1]) else { continue }
+                    wgs.append(ChinaCoord.toWgs(
+                        CLLocationCoordinate2D(latitude: lat, longitude: lon)))
+                }
+            }
+            done(wgs.isEmpty ? nil : wgs)
+        }.resume()
+    }
+
+    /// 系统算路（兜底）
+    private func appleRoute(from: CLLocationCoordinate2D,
+                            to: CLLocationCoordinate2D,
+                            done: @escaping ([CLLocationCoordinate2D]?) -> Void) {
+        DispatchQueue.main.async {
             let req = MKDirections.Request()
             req.source = MKMapItem(placemark: MKPlacemark(coordinate: from))
             req.destination = MKMapItem(placemark: MKPlacemark(coordinate: to))
             req.transportType = .automobile
             MKDirections(request: req).calculate { resp, _ in
-                guard let r = resp?.routes.first else { return }
+                guard let r = resp?.routes.first else { done(nil); return }
                 let n = r.polyline.pointCount
                 var pts: [CLLocationCoordinate2D] = []
                 pts.reserveCapacity(n)
                 let raw = r.polyline.points()
                 for i in 0..<n { pts.append(raw[i].coordinate) }
-                DispatchQueue.main.async {
-                    self.route = pts
-                    self.routeDest = to
-                }
+                done(pts)
             }
         }
     }
