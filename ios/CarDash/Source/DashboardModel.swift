@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import CoreLocation
+import MapKit
 
 /// 仪表盘数据中枢：合并「车机桥接推送」与「本机传感器」两路数据。
 /// 车机数据优先，取不到时自动退回本机 GPS。
@@ -22,9 +23,12 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var coord: CLLocationCoordinate2D?
     /// 车头方向（度）。地图「车头朝上」用。
     @Published private(set) var heading: Double = 0
-    /// 已行驶轨迹。上限 900 个点，按 8 米一个点采样，
-    /// 够画十几公里的轨迹，又不会让地图重绘变慢。
-    @Published private(set) var track: [CLLocationCoordinate2D] = []
+    /// 去目的地的路线（WGS-84）。车机报上来目的地后自动算。
+    @Published private(set) var route: [CLLocationCoordinate2D] = []
+    /// 目的地坐标（WGS-84）
+    @Published private(set) var routeDest: CLLocationCoordinate2D?
+    /// 已经算过路线的那份目的地，用来去重
+    private var routedKey: String?
 
     // MARK: - 设置
     @Published var host: String {
@@ -126,15 +130,8 @@ final class DashboardModel: ObservableObject {
             // 无效就保持上一次的车头方向，免得地图乱转
             if loc.course >= 0 { self.heading = loc.course }
 
-            if let last = self.track.last {
-                let d = CLLocation(latitude: last.latitude, longitude: last.longitude)
-                    .distance(from: loc)
-                if d < 8 { return }          // 太近的点不要，否则轨迹会糊成一团
-            }
-            self.track.append(loc.coordinate)
-            if self.track.count > 900 {
-                self.track.removeFirst(self.track.count - 900)
-            }
+            // 目的地来自车机快照，快照更新时才算路（见 poll），
+            // 这里只更新车辆位置
         }
         sensors.start()
 
@@ -209,6 +206,8 @@ final class DashboardModel: ObservableObject {
                     self.lastSuccess = Date()
                     self.link = .online
                     self.carHost = self.host
+                    // 车机一报新目的地就重算路线（内部按目的地去重）
+                    self.replanRoute()
                     return
                 }
 
@@ -379,6 +378,69 @@ final class DashboardModel: ObservableObject {
 
     var displayNav: NavState? {
         carFresh ? car?.nav : nil
+    }
+
+    // MARK: - 自动同步路线
+
+    /// 车机一报目的地就在本机算一条路线出来。
+    ///
+    /// 目的地是 Android 侧从车机语音助手的 NLU 日志里解析出来的
+    /// （D.apk 的 AssistantUtil 就是这么干的，我们套了同一套正则）。
+    ///
+    /// 算法说明：
+    ///   - 有坐标就直接用；只有名字就先地理编码。车机给的是 GCJ-02，
+    ///     而系统算路要 WGS-84，所以先转一道。
+    ///   - 路线用系统的 MKDirections：不需要 key、不依赖第三方服务。
+    ///     画到地图上是高德那种蓝色路线，视觉和车机一致。
+    private func replanRoute() {
+        guard let dest = car?.dest else {
+            if !route.isEmpty || routeDest != nil {
+                route = []
+                routeDest = nil
+                routedKey = nil
+            }
+            return
+        }
+        guard let from = coord else { return }
+
+        let key = dest.routeKey
+        guard key != routedKey else { return }
+        routedKey = key
+
+        resolveDestination(dest) { [weak self] to in
+            guard let self, let to else { return }
+            let req = MKDirections.Request()
+            req.source = MKMapItem(placemark: MKPlacemark(coordinate: from))
+            req.destination = MKMapItem(placemark: MKPlacemark(coordinate: to))
+            req.transportType = .automobile
+            MKDirections(request: req).calculate { resp, _ in
+                guard let r = resp?.routes.first else { return }
+                let n = r.polyline.pointCount
+                var pts: [CLLocationCoordinate2D] = []
+                pts.reserveCapacity(n)
+                let raw = r.polyline.points()
+                for i in 0..<n { pts.append(raw[i].coordinate) }
+                DispatchQueue.main.async {
+                    self.route = pts
+                    self.routeDest = to
+                }
+            }
+        }
+    }
+
+    /// 拿到目的地的 WGS-84 坐标：有坐标先转坐标系，只有名字就地理编码。
+    private func resolveDestination(_ dest: Dest,
+                                    done: @escaping (CLLocationCoordinate2D?) -> Void) {
+        if let la = dest.lat, let lo = dest.lon, la != 0, lo != 0 {
+            // 车机给的是火星坐标，转回 WGS-84 再交给系统算路
+            let gcj = CLLocationCoordinate2D(latitude: la, longitude: lo)
+            done(ChinaCoord.toWgs(gcj))
+            return
+        }
+        guard let name = dest.name, !name.isEmpty else { done(nil); return }
+        CLGeocoder().geocodeAddressString(name) { marks, _ in
+            done(marks?.first?.location?.coordinate)
+        }
     }
 
     /// 地图能不能显示。定位被拒或还没定位到就显示占位背景。

@@ -20,6 +20,19 @@ struct CarSnapshot: Codable, Equatable {
     var nav: NavState?
     /// 各字段的来源，用于排查（vhal / none 等）
     var src: [String: String]?
+    /// 车机导航的目的地。Android 侧从车机语音助手的 NLU 日志里解析出来
+    /// （见 DestSignals），有值就自动算路线画到地图上。
+    var dest: Dest?
+}
+
+/// 车机报上来的导航目的地
+struct Dest: Codable, Hashable {
+    var name: String?
+    var lat: Double?
+    var lon: Double?
+
+    /// 换目的地才重算路线，避免每 250ms 拉一次 /state 就重算一次
+    var routeKey: String { "\(name ?? "")|\(lat ?? 0)|\(lon ?? 0)" }
 }
 
 struct MusicState: Codable, Equatable {

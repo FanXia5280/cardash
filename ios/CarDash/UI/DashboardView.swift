@@ -10,24 +10,46 @@ struct DashboardView: View {
     @State private var showSettingsButton = false
     @State private var hideWork: DispatchWorkItem?
 
+    /// 地图底图：默认用高德（视觉和车机一致）。万一瓦片服务不通，
+    /// 在设置里切回苹果即可 —— 不至于开天窗。
+    @AppStorage("useAmapTiles") private var useAmapTiles = true
+
     var body: some View {
         ZStack {
             // ── 背景：导航地图 ──
-            // 定位不可用时退回原来的动态背景，不至于开天窗。
             if let reason = model.mapUnavailableReason {
                 MapPlaceholder(reason: reason)
                     .ignoresSafeArea()
             } else {
-                NavMapView(coord: model.coord,
-                           heading: model.heading,
-                           track: model.track)
-                    .ignoresSafeArea()
+                GeometryReader { g in
+                    NavMapView(coord: model.coord,
+                               heading: model.heading,
+                               route: model.route,
+                               dest: model.routeDest,
+                               useAmapTiles: useAmapTiles)
+                        // 渐变地图：中心实、四边渐隐进底色。
+                        // 参考图里地图和 HUD 之间没有硬边界；而且四边压暗之后，
+                        // HUD 的文字不会被路网的花纹干扰。
+                        .mask(
+                            RadialGradient(
+                                gradient: Gradient(stops: [
+                                    .init(color: .black, location: 0.00),
+                                    .init(color: .black, location: 0.60),
+                                    .init(color: .black.opacity(0.55), location: 0.82),
+                                    .init(color: .black.opacity(0.00), location: 1.00),
+                                ]),
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: max(g.size.width, g.size.height) * 0.72
+                            )
+                        )
+                }
+                .ignoresSafeArea()
             }
 
-            // 压一层很淡的上下暗角：白色 HUD 压在任何地图底色上都能读清，
-            // 中间留亮，视线还是在地图上
+            // 上下再压一层很淡的暗角，保证白色 HUD 在任何底色上都读得清
             LinearGradient(
-                colors: [.black.opacity(0.36), .black.opacity(0.10), .black.opacity(0.42)],
+                colors: [.black.opacity(0.30), .clear, .black.opacity(0.36)],
                 startPoint: .top, endPoint: .bottom
             )
             .ignoresSafeArea()
@@ -49,7 +71,7 @@ struct DashboardView: View {
                     .padding(.bottom, k * 10)
                     .frame(width: geo.size.width, height: geo.size.height)
 
-                    // 浮出来的设置按钮：放在底栏上方，不挡任何数据
+                    // 浮出来的设置按钮
                     if showSettingsButton {
                         VStack {
                             Spacer()
@@ -89,9 +111,6 @@ struct DashboardView: View {
     private func landscapeLayout(geo: GeometryProxy, k: CGFloat) -> some View {
         VStack(spacing: 0) {
             // ── 顶栏：左上日期时间 / 中间导航摘要 / 右上海拔 ──
-            // 用 ZStack 让中间那块**真正落在屏幕正中**。
-            // 原来用 HStack + 两侧 Spacer：左右两块宽度本来就不一样，
-            // Spacer 撑出来的「中间」会偏，看着就没居中。
             ZStack {
                 ClockPanel(scale: k)
                     .hudCard(k)
@@ -108,20 +127,10 @@ struct DashboardView: View {
 
             Spacer(minLength: 8)
 
-            // ── 主区：左音乐 / 中车速 ──
-            // 左侧给了音乐卡就占掉一块宽度，右侧对称留一块空位，
-            // 中间的车速表才会落在屏幕正中。
-            HStack(alignment: .center, spacing: 0) {
-                MusicPanel(music: model.displayMusic, scale: k)
-                    .hudCard(k)
-                    .frame(width: geo.size.width * 0.34, alignment: .leading)
-
-                SpeedGauge(speed: model.displaySpeed, scale: k)
-                    .frame(maxWidth: .infinity)
-
-                Color.clear
-                    .frame(width: geo.size.width * 0.34)
-            }
+            // ── 中间：只有车速 ──
+            // 音乐卡已按要求移除，地图这块不再被占宽度。
+            SpeedGauge(speed: model.displaySpeed, scale: k)
+                .frame(maxWidth: .infinity)
 
             Spacer(minLength: 8)
 
@@ -151,10 +160,6 @@ struct DashboardView: View {
 
     // MARK: - 竖屏版式
 
-    /// 竖屏是「窄而高」，三栏并排会挤成一团，所以改成上下排。
-    ///
-    /// 顺序按开车时扫视的优先级：车速居中当主角，转向卡紧贴其下，
-    /// 音乐和底栏放最下面 —— 扫一眼就能拿到最要紧的两个数。
     private func portraitLayout(k: CGFloat) -> some View {
         VStack(spacing: 0) {
             // ── 顶栏：日期时间 / 海拔 ──
@@ -181,17 +186,7 @@ struct DashboardView: View {
 
             Spacer(minLength: k * 6)
 
-            // ── 音乐 ──
-            MusicPanel(music: model.displayMusic, scale: k)
-                .hudCard(k)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: k * 6)
-
-            // ── 底栏 ──
-            // 竖屏可用宽度只有横屏一半，档位+电量挤一行会溢出
-            //（实测两栏加起来约 349pt，而窄屏只剩 331pt），
-            // 所以拆成两行 —— 竖屏缺的是宽度，不是高度。
+            // ── 底栏：竖屏宽度只有一半，两栏并排会溢出，拆两行 ──
             VStack(alignment: .leading, spacing: k * 7) {
                 BatteryRangePanel(soc: model.displaySoc,
                                   range: model.displayRange,
@@ -204,7 +199,6 @@ struct DashboardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // 连接状态：竖屏底部被底栏占满，放最后一行
             LinkBadge(status: model.link, scale: k)
                 .padding(.top, k * 8)
         }
@@ -215,7 +209,6 @@ struct DashboardView: View {
     /// 以**短边**为基准：横屏时短边是高度、竖屏时短边是宽度。
     /// 这样同一个元素在两种方向下大小一致 —— 如果还用高度当基准，
     /// 竖屏高度 844 会把所有字撑到上限，挤成一团。
-    /// 下限避免小屏糊在一起，上限避免大屏（Pro Max / Air）字过大。
     private func scaleFactor(for geo: GeometryProxy) -> CGFloat {
         let base = min(geo.size.width, geo.size.height)
         return min(max(base / 390.0, 0.62), 1.28)

@@ -115,6 +115,12 @@ public final class LogcatSignals {
 
                 String line;
                 while (running && (line = reader.readLine()) != null) {
+                    // 每一行都先过一遍目的地解析。
+                    // 注意要放在下面的粗筛**之前** —— 车机语音助手的 NLU 日志
+                    // 里既没有 CarPropertyValue 也没有 MessageProperty，
+                    // 放后面会被 continue 掉。
+                    DestSignals.onLine(line);
+
                     // 快速排除绝大多数无关行，避免每行都跑正则。
                     // 顺带把 VehicleProperty 也收进来 —— 万一车机打的不是
                     // CarPropertyValue 而是另一种格式，采样里能看到，不至于瞎猜。

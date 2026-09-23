@@ -5,6 +5,9 @@ struct SettingsSheet: View {
     @ObservedObject var model: DashboardModel
     @Environment(\.dismiss) private var dismiss
 
+    /// 地图底图：高德 / 苹果。万一高德瓦片加载不出来可以切回来。
+    @AppStorage("useAmapTiles") private var useAmapTiles = true
+
     @State private var diagTitle = ""
     @State private var diagText = ""
     @State private var showDiag = false
@@ -60,6 +63,15 @@ struct SettingsSheet: View {
                             }
                         }
                     }
+                }
+
+                Section {
+                    Toggle("使用高德地图底图", isOn: $useAmapTiles)
+                } header: {
+                    Text("地图")
+                } footer: {
+                    Text("默认用高德，配色和车机一致，不需要 key。"
+                         + "万一瓦片加载不出来就关掉，会切回苹果地图。")
                 }
 
                 Section {

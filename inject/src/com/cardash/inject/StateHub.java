@@ -128,6 +128,13 @@ public final class StateHub {
         // 车速不下发 —— 仪表只用 iPhone 自己的 GPS。
         // 车机测到的值放在 carSpeed 里，仅供诊断对照。
         b.append(",\"carSpeed\":").append(Json.num(carSpeedKmh));
+        // 车机导航目的地。有值的话 iPhone 那边会自动算一条路线画在地图上。
+        if (DestSignals.fresh()) {
+            b.append(",\"dest\":{\"name\":").append(Json.esc(DestSignals.destName()))
+             .append(",\"lat\":").append(Json.num(DestSignals.lat()))
+             .append(",\"lon\":").append(Json.num(DestSignals.lon()))
+             .append('}');
+        }
         b.append(",\"gear\":").append(Json.esc(gear));
         b.append(",\"soc\":").append(Json.num(soc));
         b.append(",\"range\":").append(Json.num(rangeKm));

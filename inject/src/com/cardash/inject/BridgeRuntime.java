@@ -383,6 +383,9 @@ public final class BridgeRuntime {
         sb.append("  总里程 ").append(hub.odometerKm == null ? "--" : String.valueOf(hub.odometerKm)).append('\n');
         sb.append("  封面   ").append(hub.mCover == null ? "无" : (hub.mCover.length() + " 字符")).append('\n');
 
+        sb.append("\n【目的地（自动同步路线用）】\n");
+        sb.append(DestSignals.report());
+
         sb.append("\n【导航】\n");
         sb.append("  listener     = ")
           .append(hub.src.get("listener") == null ? "未连接" : hub.src.get("listener")).append('\n');
