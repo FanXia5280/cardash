@@ -34,6 +34,19 @@ struct NaviKitNavView: UIViewRepresentable {
         // 控件；路线、红绿灯、电子眼、车标是地图元素，不受影响，仍然显示。
         v.showUIElements = false
         v.showTrafficBar = false      // 右侧那条彩色光柱单独关掉
+        // 比例尺也关掉（用户要求：导航自己会缩放，不需要尺子）。
+        // 文档原话：showScale 只在 showUIElements = NO 时才可设 —— 正好符合。
+        v.showScale = false
+
+        // ── 日夜模式：按日出日落自动切换 ──
+        // AMapNaviDriveView.mapViewModeType，枚举定义在 AMapNaviCommonObj.h：
+        //   0 = Day   1 = Night   2 = DayNightAuto（按日出日落自动）   3 = Custom
+        // ⚠️ 默认值是 **0 = Day** —— 这就是「晚上地图还是白的」的原因。
+        // 这里故意用 rawValue 取 2，不写 .dayNightAuto 这类 case 名：
+        // SDK 的枚举名字踩过坑，rawValue 是 ABI 级稳定的（头文件里写死的 2）。
+        if let auto = AMapNaviViewMapModeType(rawValue: 2) {
+            v.mapViewModeType = auto
+        }
         context.coordinator.attach(view: v)
         context.coordinator.plan(from: from, to: to)
         return v

@@ -403,8 +403,15 @@ final class DashboardModel: ObservableObject {
     ///   - 路线用系统的 MKDirections：不需要 key、不依赖第三方服务。
     ///     画到地图上是高德那种蓝色路线，视觉和车机一致。
     private func replanRoute() {
-        // 测试按钮塞的假目的地优先；清掉就回落到车机真实数据
-        guard let dest = mockDest ?? car?.dest else {
+        // 只有**车机导航开着**的时候，才按车机报的目的地算路线。
+        //
+        // ⚠️ 2026-09-23：以前不看这个，只要 /state 里有 dest 就一直算下去。
+        // 车机那边的 dest 有 30 分钟新鲜度窗口，导航早就结束了它还在，
+        // 结果仪表上长期挂着一条不存在的路线（用户说「IPA 会自己改目的地」）。
+        let navOn = car?.nav?.isActive == true
+        // 测试按钮塞的假目的地优先；没有就用车机的（前提是车机在导航）
+        let candidate = mockDest ?? (navOn ? car?.dest : nil)
+        guard let dest = candidate, dest.isUsable else {
             if !route.isEmpty || routeDest != nil || !routeSegments.isEmpty {
                 route = []
                 routeSegments = []
@@ -421,6 +428,24 @@ final class DashboardModel: ObservableObject {
 
         resolveDestination(dest) { [weak self] to in
             guard let self, let to else { return }
+
+            // 最后一道防线：目的地离当前位置太近（<150 米）基本可以断定是
+            // 「把车自己的位置当成了终点」—— 那正是 2026-09-23 那次乱跳的症状。
+            // 宁可这一趟不画路线，也不画一条和车机完全不同的路线。
+            if let here = self.coord {
+                let a = CLLocation(latitude: here.latitude, longitude: here.longitude)
+                let b = CLLocation(latitude: to.latitude, longitude: to.longitude)
+                if a.distance(from: b) < 150 {
+                    DispatchQueue.main.async {
+                        self.route = []
+                        self.routeSegments = []
+                        self.routeDest = nil
+                        // ⚠️ 故意**不清 routedKey**：清了的话每次刷新都会重新
+                        // 地理编码，白刷接口。key 记着「这条已处理过」。
+                    }
+                    return
+                }
+            }
 
             // 先走高德算路：和车机同源，路线能对得上
             self.amapRoute(from: from, to: to) { pts, segs in

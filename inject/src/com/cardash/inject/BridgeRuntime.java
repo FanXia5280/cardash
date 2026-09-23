@@ -52,6 +52,15 @@ public final class BridgeRuntime {
             Diagnostics.log("注册高德广播失败: " + t);
         }
 
+        // 车机原生导航的 IPC 桥（不靠语音拿目的地的那条正路）。
+        // 这一版是探测器：只读 D.apk 的字段 + 按需触发一次「主动查终点」，
+        // 结果全进 /diag —— 拿到真实字段格式后再决定怎么用。
+        try {
+            S05Navi.start();
+        } catch (Throwable t) {
+            Diagnostics.log("S05Navi 启动失败: " + t);
+        }
+
         // 这里 hub 还没声明，直接用 get()
         StateHub.get().setSource("apkVer", versionName(app));
 
@@ -287,6 +296,12 @@ public final class BridgeRuntime {
         sb.append("  logcatSeen = ").append(hub.logcatSeen)
           .append("   logcatMatched = ").append(hub.logcatMatched).append('\n');
 
+        // 车机原生导航 IPC（不靠语音拿目的地的那条路）。
+        // 顺手触发一次「主动查终点」—— 限流 30 秒，结果几十秒后反映在上面那些字段里。
+        S05Navi.probeDestination("diag");
+        sb.append("\n【车机原生导航 IPC（D.apk 的 NaviIpcBridge / HudNaviManager）】\n");
+        sb.append(S05Navi.report());
+
         sb.append("\n想看 logcat 抽样打开: ").append(primaryUrl()).append("/logcat\n");
         sb.append("想看厂商属性全量扫描: ").append(primaryUrl()).append("/scan\n");
         sb.append("想看桥接运行日志打开: ").append(primaryUrl()).append("/log\n");
@@ -423,6 +438,11 @@ public final class BridgeRuntime {
         sb.append(AmapSignals.rawSummary());
         sb.append('\n').append(AmapSignals.extrasAll());
         sb.append('\n').append(AmapSignals.iconCalibration());
+
+        // 车机原生导航 IPC —— 不靠语音拿目的地的那条路，这里也触发一次采样
+        S05Navi.probeDestination("logcat");
+        sb.append("\n【车机原生导航 IPC（D.apk 内部，不靠语音）】\n");
+        sb.append(S05Navi.report());
 
         sb.append("\n【车机实时推送（挂钩 D.apk 的监听器，档位就在这里）】\n");
         if (vendor != null) {

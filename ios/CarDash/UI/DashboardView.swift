@@ -193,25 +193,18 @@ struct DashboardView: View {
             SpeedGauge(speed: model.displaySpeed, scale: k, align: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 8)
-
-            // ── 转向卡：参考图里那个「110米 进入南海路」，放正下方 ──
-            TurnCard(nav: model.displayNav, scale: k)
-
+            // 转向卡（TurnCard）已按用户要求整块移除 —— 转向看车机自己的屏幕。
+            // 所以这里只剩一个弹性空隙，把底栏顶到屏幕底部。
             Spacer(minLength: 10)
 
             // ── 底栏：左电量续航 / 右档位总里程 ──
+            // 中间那块比例尺（ZoomPill）也删了：导航视图自己会缩放，
+            // 那条尺子只控制「非导航地图」的视距，导航时没有意义。
             HStack(alignment: .bottom) {
                 BatteryRangePanel(soc: model.displaySoc,
                                   range: model.displayRange,
                                   scale: k)
                     .hudCard(k)
-                Spacer(minLength: 10)
-                ZoomPill(zoom: zoom, scale: k) {
-                    zoom = min(19, zoom + 1)
-                } onZoomOut: {
-                    zoom = max(12, zoom - 1)
-                }
                 Spacer(minLength: 10)
                 GearOdometerPanel(gear: model.displayGear,
                                   odometer: model.displayOdometer,
@@ -252,30 +245,23 @@ struct DashboardView: View {
             SpeedGauge(speed: model.displaySpeed, scale: k * 1.05)
                 .padding(.top, k * 4)
 
+            // 转向卡已移除，这里只留一个弹性空隙（原来它前后各一个）
             Spacer(minLength: k * 16)
 
-            // ── 转向卡 ──
-            TurnCard(nav: model.displayNav, scale: k)
-
-            Spacer(minLength: k * 6)
-
             // ── 底栏：竖屏宽度只有一半，两栏并排会溢出，拆两行 ──
+            // 比例尺删掉后，总里程挪到它原来的位置（右下角）——
+            // 用户要求：「竖屏下的车辆总公里数放到现在比例尺缩放的地方」。
             VStack(alignment: .leading, spacing: k * 7) {
                 BatteryRangePanel(soc: model.displaySoc,
                                   range: model.displayRange,
                                   scale: k)
                     .hudCard(k)
-                HStack {
-                    GearOdometerPanel(gear: model.displayGear,
-                                      odometer: model.displayOdometer,
-                                      scale: k)
+                HStack(alignment: .bottom) {
+                    GearPanel(gear: model.displayGear, scale: k)
                         .hudCard(k)
                     Spacer(minLength: 8)
-                    ZoomPill(zoom: zoom, scale: k) {
-                        zoom = min(19, zoom + 1)
-                    } onZoomOut: {
-                        zoom = max(12, zoom - 1)
-                    }
+                    OdometerPanel(odometer: model.displayOdometer, scale: k)
+                        .hudCard(k)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -296,61 +282,14 @@ struct DashboardView: View {
     }
 }
 
-// MARK: - 视距（缩放）控制
-
-/// 对应高德导航里那个「50米 / 100米 / 200米」的视距缩放。
-/// 直接调 MAMapView.zoomLevel（高德官方 API），越大越近。
-/// 做成一条横向胶囊，样式和其它 HUD 卡一致，不突兀。
-private struct ZoomPill: View {
-    let zoom: Int
-    let scale: CGFloat
-    let onZoomIn: () -> Void
-    let onZoomOut: () -> Void
-
-    var body: some View {
-        HStack(spacing: scale * 12) {
-            Button(action: onZoomOut) {
-                Image(systemName: "minus")
-                    .font(.system(size: scale * 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: scale * 26, height: scale * 26)
-                    .background(Circle().fill(Color.white.opacity(0.10)))
-            }
-            .buttonStyle(.plain)
-
-            Text(ZoomPill.scaleLabel(zoom))
-                .font(.system(size: scale * 13, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.92))
-                .frame(minWidth: scale * 46)
-
-            Button(action: onZoomIn) {
-                Image(systemName: "plus")
-                    .font(.system(size: scale * 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: scale * 26, height: scale * 26)
-                    .background(Circle().fill(Color.white.opacity(0.10)))
-            }
-            .buttonStyle(.plain)
-        }
-        .hudCard(scale)
-    }
-
-    /// zoomLevel → 比例尺文案。高德的尺子随 zoom 走，近似值够用。
-    static func scaleLabel(_ zoom: Int) -> String {
-        switch zoom {
-        case 12: return "5公里"
-        case 13: return "2公里"
-        case 14: return "1公里"
-        case 15: return "500米"
-        case 16: return "200米"
-        case 17: return "100米"
-        case 18: return "50米"
-        case 19: return "25米"
-        default: return "\(zoom)"
-        }
-    }
-}
+// MARK: - 视距（缩放）控制 —— 已移除
+//
+// ⚠️ 2026-09-23 按用户要求删掉了右下那条「− 25米 ＋」（原来叫 ZoomPill）。
+// 原因：导航用的是 AMapNaviDriveView，**它自己会按路况/车速缩放**，
+// 我们那条尺子只对「非导航地图」的 MAMapView.zoomLevel 生效，导航时纯属误导。
+//
+// 视距本身没丢：非导航地图仍然按车速自动调档（见下面的 MapZoom.autoOffset
+// 和 onAppear/onChange 里写回 zoom 的那段）。要手动调档得重新加 UI —— 先问用户。
 
 // MARK: - 点一下屏幕才浮出来的设置按钮
 

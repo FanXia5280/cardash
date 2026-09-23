@@ -203,6 +203,8 @@ struct NavMapView: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
 
         private var drewAmap = false
+        /// 上一版瓦片是深色还是浅色。日夜模式变化时要重铺一次。
+        private var drewDark: Bool?
         private var routeLine: MKPolyline?
         private var routeCount = -1
         private var destPin: MKPointAnnotation?
@@ -216,11 +218,14 @@ struct NavMapView: UIViewRepresentable {
                     dest: CLLocationCoordinate2D?,
                     useAmapTiles: Bool) {
 
-            if useAmapTiles != drewAmap {
+            // 栅格兜底地图也跟着日夜模式走（高德矢量样式用不了时才走这里）
+            let wantDark = DayNight.isNight()
+            if useAmapTiles != drewAmap || wantDark != drewDark {
                 drewAmap = useAmapTiles
+                drewDark = wantDark
                 for o in view.overlays where o is AmapTileOverlay { view.removeOverlay(o) }
                 if useAmapTiles {
-                    view.addOverlay(AmapTileOverlay(dark: true), level: .aboveRoads)
+                    view.addOverlay(AmapTileOverlay(dark: wantDark), level: .aboveRoads)
                 }
             }
 

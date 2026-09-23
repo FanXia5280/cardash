@@ -159,16 +159,34 @@ public final class AmapSignals {
                 + " (EXTRA_STATE=" + st + ")");
         StateHub hub = StateHub.get();
         hub.setSource("amap", m == 1 ? "navigating" : m == 2 ? "cruising" : "idle");
-        if (m == 0) {
-            // 导航和巡航都退出了，清掉实时数据，免得仪表盘上残留旧信息
-            hub.navActive = false;
-            hub.navTurn = null;
-            hub.navEta = null;
-            hub.navRemain = null;
-            hub.navArrive = null;
-            hub.navAfter = null;
-            hub.navDistance = null;
+        if (m == 0) maybeClearIfNaviEnded(hub);
+    }
+
+    /**
+     * 真的结束导航了吗？
+     *
+     * ⚠️ 2026-09-23 实测：导航中 EXTRA_STATE 会 **8 → 40 → 8 每分钟翻一次**
+     * （log 里一整串「导航中(8) / 空闲(40)」就是这么来的）。
+     * 之前的写法是「一看到空闲就把 navTurn/navEta/... 全清掉」，
+     * 于是仪表每分钟闪一次「导航没了」，而且随后 navActive=false 又让
+     * iPhone 那边的导航栏整块消失 —— 这是个大坑，别改回去。
+     *
+     * 现在只看**引导广播**断没断：超过 60 秒没有引导信息才算导航结束。
+     * （引导广播在真正导航时每秒都来，所以这个判据很稳。）
+     */
+    private static void maybeClearIfNaviEnded(StateHub hub) {
+        if (lastGuideAt > 0 && System.currentTimeMillis() - lastGuideAt < 60000L) {
+            return;                 // 还在收引导信息，那个「空闲」是假的
         }
+        hub.navActive = false;
+        hub.navTurn = null;
+        hub.navEta = null;
+        hub.navRemain = null;
+        hub.navArrive = null;
+        hub.navAfter = null;
+        hub.navDistance = null;
+        hub.navSub = null;
+        hub.navTitle = null;
     }
 
     /** 给 /logcat 用 */

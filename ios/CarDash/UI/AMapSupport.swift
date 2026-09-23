@@ -105,6 +105,35 @@ enum MapZoom {
     }
 }
 
+// MARK: - 日夜模式
+
+/// 日夜模式判定。
+///
+/// 两套地图各走各的机制：
+///   - **导航视图**（AMapNaviDriveView）：SDK 自己按**日出日落**切，
+///     我们只要把 mapViewModeType 设成 2 = DayNightAuto 就行（见 NaviKitView）。
+///   - **普通矢量地图**（MAMapView）：没有自动档，只有 mapType 两套样式
+///     （.standard 白天 / .standardNight 夜间），所以这里用**本地时间窗**判，
+///     作为统一兜底。
+///
+/// 时间窗取 6:30 ~ 19:00（成都 9 月约 6:50 日出 / 19:30 日落，够用）。
+/// 想调就在下面两行改。
+///
+/// ⚠️ 2026-09-23 的背景：用户反馈「地图只有白色，晚上也刺眼，要自动切」。
+/// 之前两处都是写死的白天样式（MAMapView 那处当时是特意改回白天的，
+/// 现在自相矛盾了 —— 所以这次统一改成自动）。
+enum DayNight {
+    static let dayStartHour = 6.5
+    static let dayEndHour = 19.0
+
+    /// 现在算不算「晚上」
+    static func isNight(_ date: Date = Date(), calendar: Calendar = .current) -> Bool {
+        let c = calendar.dateComponents([.hour, .minute], from: date)
+        let h = Double(c.hour ?? 12) + Double(c.minute ?? 0) / 60.0
+        return h < dayStartHour || h >= dayEndHour
+    }
+}
+
 // MARK: - 高德矢量地图
 
 #if canImport(AMapNaviKit)
@@ -140,9 +169,10 @@ struct AMapNavView: UIViewRepresentable {
 
         let v = MAMapView(frame: .zero)
         v.delegate = context.coordinator
-        // 高德原版标准样式（白天）。之前用的 .standardNight 是暗黑底，
-        // 和仪表盘的玻璃质感不搭，用户明确要白天样式。
-        v.mapType = .standard
+        // 高德原版标准样式，**白天/夜间跟着时间自动切**（见 DayNight）。
+        // ⚠️ 这里以前写死 .standard（用户反馈：晚上也是白花花的一片），
+        // 更早还写死过 .standardNight（用户又说太黑）—— 两边都别写死。
+        v.mapType = DayNight.isNight() ? .standardNight : .standard
         // 实时路况（参考图里那些红黄绿的路段）
         v.isShowTraffic = true
         v.showsUserLocation = false
@@ -192,6 +222,12 @@ struct AMapNavView: UIViewRepresentable {
                     segments: [RouteSegment],
                     zoom: Int,
                     speed: Double?) {
+
+            // 日夜模式：过点（傍晚天黑了 / 早上天亮了）就换样式，不用重启 App
+            let wantType: MAMapType = DayNight.isNight() ? .standardNight : .standard
+            if view.mapType != wantType {
+                view.mapType = wantType
+            }
 
             // 视距 = 用户基准 + 按车速自动加减档。
             // 只有目标变了才动，别每帧重置，否则 +/− 没效果。

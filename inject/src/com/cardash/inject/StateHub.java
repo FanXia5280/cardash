@@ -79,6 +79,13 @@ public final class StateHub {
     public volatile long navUpdatedAt;
     /** 数据来源：notify:<包名> 或 a11y:<包名> */
     public volatile String navSource;
+    /**
+     * 车机**自己 HUD 上显示的两行字**（反射读 D.apk 的 HudNaviManager）。
+     * 只做对照用：iPhone 现在的导航栏还是走高德广播那套，
+     * 这两行先原样透出来，方便判断「车机原生导航到底有没有数据」。
+     */
+    public volatile String carNavLine1;
+    public volatile String carNavLine2;
 
     // ── 诊断 ──
     public final Map<String, String> src = new LinkedHashMap<>();
@@ -133,6 +140,12 @@ public final class StateHub {
             b.append(",\"dest\":{\"name\":").append(Json.esc(DestSignals.destName()))
              .append(",\"lat\":").append(Json.num(DestSignals.lat()))
              .append(",\"lon\":").append(Json.num(DestSignals.lon()))
+             .append('}');
+        }
+        // 车机自己 HUD 上的两行导航文字（对照用，iPhone 目前不显示）
+        if (carNavLine1 != null || carNavLine2 != null) {
+            b.append(",\"carNav\":{\"line1\":").append(Json.esc(carNavLine1))
+             .append(",\"line2\":").append(Json.esc(carNavLine2))
              .append('}');
         }
         b.append(",\"gear\":").append(Json.esc(gear));

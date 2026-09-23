@@ -326,59 +326,12 @@ struct MusicPanel: View {
     }
 }
 
-// MARK: - 正下方：转向卡
-
-/// 对应参考图底部中央那块「🚗 110米 / 进入南海路」。
-///
-/// 从原来的**右中栏**挪到**正下方**：一是右下角离视线远，二是背景换成地图后
-/// 右边要留给地图，导航信息压在地图旁边看不清。
-/// 现在做成一张独立的卡，开车时低头一眼就能看到。
-struct TurnCard: View {
-    let nav: NavState?
-    let scale: CGFloat
-
-    private var active: Bool { nav?.isActive ?? false }
-
-    /// 道路名优先用 subtitle（车机把转向动作放 title、路名放 subtitle）
-    private var road: String? {
-        for c in [nav?.subtitle, nav?.title] {
-            if let s = c, !s.isEmpty, s != nav?.distance { return s }
-        }
-        return nil
-    }
-
-    var body: some View {
-        HStack(spacing: scale * 13) {
-            Image(systemName: nav?.symbolName ?? "arrow.up")
-                .font(.system(size: scale * 34, weight: .bold))
-                .foregroundStyle(Color(hex: 0x8FD8FF))
-                .frame(width: scale * 42, height: scale * 42)
-
-            VStack(alignment: .leading, spacing: scale * 1) {
-                Text(nav?.distance ?? nav?.title ?? "--")
-                    .font(.system(size: scale * 26, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-
-                if let road {
-                    Text("进入 \(road)")
-                        .font(.system(size: scale * 15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .minimumScaleFactor(0.6)
-                }
-            }
-        }
-        .hudCard(scale, padding: 1.3)
-        // 没导航时整块淡出，但保留占位，避免布局跳动
-        .opacity(active ? 1 : 0)
-        .animation(.easeInOut(duration: 0.2), value: active)
-        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
-    }
-}
+// MARK: - 正下方：转向卡（已移除）
+//
+// ⚠️ 2026-09-23 按用户要求**删掉了**这张卡（原来显示「↗ 进入 大成路北段」）。
+// 它显示的内容和车机自己的导航卡是重复的，而且车机换个转向它就变，
+// 叠在地图上很乱。转向提示以**车机屏幕**为准，iPhone 这边不显示。
+// 对应的结构体 TurnCard 一起删了，别再加回来（要加就先问用户）。
 
 // MARK: - 顶栏中间：还有多久 / 还有多远到目的地
 
@@ -392,7 +345,10 @@ struct NavSummaryPanel: View {
 
     var body: some View {
         HStack(spacing: scale * 13) {
-            Image(systemName: nav?.symbolName ?? "arrow.up")
+            // 终点标识 —— 按用户要求，这里不再显示左转/右转箭头
+            // （转向提示看车机自己的屏幕，iPhone 只标「这是去终点的行程」）。
+            // flag.checkered 需要 iOS 16，工程的 deploymentTarget 就是 16.0。
+            Image(systemName: "flag.checkered")
                 .font(.system(size: scale * 15, weight: .bold))
                 .foregroundStyle(.white.opacity(0.88))
 
@@ -424,12 +380,48 @@ struct NavSummaryPanel: View {
 
 // MARK: - 右下：档位 + 总里程
 
+/// 档位和总里程。**横屏**下是一张卡（原来就是这样）；
+/// 竖屏下两者分开放（用户要求：总里程挪到原来比例尺的位置），
+/// 所以拆成 GearPanel / OdometerPanel 两个独立的块，各自能单独包 hudCard。
 struct GearOdometerPanel: View {
     let gear: String?
     let odometer: Double?
     let scale: CGFloat
 
+    var body: some View {
+        HStack(spacing: scale * 16) {
+            GearPanel(gear: gear, scale: scale)
+            OdometerPanel(odometer: odometer, scale: scale)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+    }
+}
+
+/// 只要档位（P R N D）
+struct GearPanel: View {
+    let gear: String?
+    let scale: CGFloat
+
     private let order = ["P", "R", "N", "D"]
+
+    var body: some View {
+        HStack(spacing: scale * 12) {
+            ForEach(order, id: \.self) { g in
+                Text(g)
+                    .font(.system(size: scale * 19,
+                                  weight: g == gear ? .bold : .medium,
+                                  design: .rounded))
+                    .foregroundStyle(g == gear ? Color.white : Color.white.opacity(0.28))
+            }
+        }
+        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+    }
+}
+
+/// 只要总里程。竖屏下它被单独放到右下角（原来比例尺的位置）
+struct OdometerPanel: View {
+    let odometer: Double?
+    let scale: CGFloat
 
     private var odoText: String {
         guard let o = odometer, o.isFinite else { return "-- km" }
@@ -441,22 +433,10 @@ struct GearOdometerPanel: View {
     }
 
     var body: some View {
-        HStack(spacing: scale * 16) {
-            HStack(spacing: scale * 12) {
-                ForEach(order, id: \.self) { g in
-                    Text(g)
-                        .font(.system(size: scale * 19,
-                                      weight: g == gear ? .bold : .medium,
-                                      design: .rounded))
-                        .foregroundStyle(g == gear ? Color.white : Color.white.opacity(0.28))
-                }
-            }
-
-            Text(odoText)
-                .font(.system(size: scale * 19, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.88))
-        }
-        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
+        Text(odoText)
+            .font(.system(size: scale * 19, weight: .medium, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(.white.opacity(0.88))
+            .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 }

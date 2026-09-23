@@ -44,6 +44,20 @@ struct Dest: Codable, Hashable {
 
     /// 换目的地才重算路线，避免每 250ms 拉一次 /state 就重算一次
     var routeKey: String { "\(name ?? "")|\(lat ?? 0)|\(lon ?? 0)" }
+
+    /// 这份目的地可信吗？
+    ///
+    /// ⚠️ 背景（2026-09-23）：车机那边曾经把**车机自己的 GPS 位置**当目的地报上来，
+    /// 于是 IPA 画出来的路线跟车机完全不一样，而且车一动「目的地」就变。
+    /// 根因已在车机侧修掉（DestSignals 只认语音语义日志），这里再兜一道：
+    /// 要么有名字（可以地理编码），要么坐标像一份**合理范围内的经纬度**。
+    var isUsable: Bool {
+        if let la = lat, let lo = lon, la != 0, lo != 0,
+           la > 3.5, la < 53.6, lo > 73.5, lo < 135.1 {
+            return true
+        }
+        return !(name ?? "").isEmpty
+    }
 }
 
 struct MusicState: Codable, Equatable {
