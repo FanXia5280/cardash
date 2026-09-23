@@ -31,43 +31,33 @@ struct DashboardView: View {
             if let reason = model.mapUnavailableReason {
                 MapPlaceholder(reason: reason)
                     .ignoresSafeArea()
-            } else if let dest = model.routeDest, amapAgreed {
-                // 车机报了目的地：整屏交给高德官方导航视图。
-                // 原版路线、3D 车标、红绿灯倒计时、电子眼，全是 SDK 自带。
-                NaviKitNavView(from: model.coord, to: dest)
+            } else if amapAgreed {
+                // **不管有没有目的地，都用同一个高德导航视图**（用户要求：
+                // 「不要用两套系统」）。没目的地时引擎进巡航模式（见 NaviKitNavView），
+                // 有目的地就正常算路导航。
+                //
+                // 好处：底图配色/车标/日夜/遮罩接缝/锚点全一致；开始导航时**不用换
+                // view**，所以也不会再卡一下、闪一下北京。
+                //
+                // ⚠️ 上一版这里在"没有目的地"时用的是 MAMapView，并且套了一层
+                // 「把地图画大 1.35 倍再偏移」的 hack 来挪车头位置 —— 那个 hack
+                // 会在左/上露出**没被地图盖住的黑边**（用户截图里的「黑的断层」），
+                // 而且车头落点算错。**别再把它加回来。**
+                NaviKitNavView(from: model.coord, to: model.routeDest)
                     .ignoresSafeArea()
             } else {
-                // 普通地图：**画得比屏幕大，再整体挪一点**。
-                //
-                // 地图里的「车头 / 当前位置」永远在视图正中，所以把视图画大 1.35 倍
-                // 再往右（横屏）/ 往下（竖屏）推，车头就落在屏幕的非中心位置了 ——
-                // 和导航视图的 screenAnchor 保持一致（横屏 0.58 / 竖屏 y 0.60）。
-                //
-                // 为什么不直接改经纬度：相机有俯角、车头还会旋转，屏幕位移换算成
-                // 经纬度随朝向/缩放变化，算不准；把视图画大再挪，跟数学无关，稳。
-                // ⚠️ 位移量不能超过 (1.35-1)/2 = 0.175 个屏幕，否则边缘露白。
-                GeometryReader { g in
-                    let anchor: CGPoint = g.size.height > g.size.width
-                        ? CGPoint(x: 0.50, y: 0.60)      // 竖屏：往下一点（别被车速压住）
-                        : CGPoint(x: 0.58, y: 0.50)      // 横屏：往右一点（左边留给大号车速）
-                    DashboardMapView(coord: model.coord,
-                                     heading: model.heading,
-                                     route: model.route,
-                                     dest: model.routeDest,
-                                     amapAgreed: amapAgreed,
-                                     useRasterFallback: useAmapTiles,
-                                     zoom: zoom,
-                                     speed: model.displaySpeed,
-                                     segments: model.routeSegments)
-                        .frame(width: g.size.width * 1.35, height: g.size.height * 1.35)
-                        .offset(x: (anchor.x - 0.5) * g.size.width,
-                                y: (anchor.y - 0.5) * g.size.height)
-                }
-                // 地图**铺满整屏**。
-                // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
-                // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
-                // 它是整块地图通亮，只在上下压两条渐变带给 HUD 垫底。
-                .ignoresSafeArea()
+                // 兜底：用户没同意高德 SDK 的隐私协议时，只能用栅格/苹果地图。
+                // 这时候样式和导航态对不上是没办法的事（SDK 不允许未同意就创建地图）。
+                DashboardMapView(coord: model.coord,
+                                 heading: model.heading,
+                                 route: model.route,
+                                 dest: model.routeDest,
+                                 amapAgreed: amapAgreed,
+                                 useRasterFallback: useAmapTiles,
+                                 zoom: zoom,
+                                 speed: model.displaySpeed,
+                                 segments: model.routeSegments)
+                    .ignoresSafeArea()
             }
 
             GeometryReader { geo in
