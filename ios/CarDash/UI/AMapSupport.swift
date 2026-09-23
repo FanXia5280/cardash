@@ -1,8 +1,8 @@
 import SwiftUI
 import CoreLocation
 
-#if canImport(MAMapKit)
-import MAMapKit
+#if canImport(AMapNaviKit)
+import AMapNaviKit
 import AMapFoundationKit
 #endif
 
@@ -81,7 +81,7 @@ struct PrivacyConsentView: View {
 }
 
 /// 视距相关的小工具。
-/// 放在 #if canImport(MAMapKit) **外面** —— DashboardView 也要用它，
+/// 放在 #if canImport(AMapNaviKit) **外面** —— DashboardView 也要用它，
 /// 不能和高德 SDK 绑在一起（没装 SDK 时栅格兜底也要能编译）。
 enum MapZoom {
     static let minLevel = 12
@@ -107,7 +107,7 @@ enum MapZoom {
 
 // MARK: - 高德矢量地图
 
-#if canImport(MAMapKit)
+#if canImport(AMapNaviKit)
 
 /// 高德矢量地图（首选）。
 ///
@@ -369,7 +369,7 @@ struct DashboardMapView: View {
     let segments: [RouteSegment]
 
     var body: some View {
-        #if canImport(MAMapKit)
+        #if canImport(AMapNaviKit)
         if amapAgreed {
             AMapNavView(coord: coord, heading: heading, route: route, dest: dest,
                         segments: segments, zoom: zoom, speed: speed)

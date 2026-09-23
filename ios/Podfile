@@ -20,7 +20,11 @@ target 'CarDash' do
   # 新大版本，接口一改，工程就莫名挂掉。
   #
   # 本工程里所有 MAMapView 调用都是按 11.x 的头文件写的。
-  pod 'AMap3DMap-NO-IDFA', '~> 11.0'
+  # ⚠️ 导航 SDK（AMapNaviKit）**内部自带地图 SDK**，所以不能再单独引入
+  # AMap3DMap-NO-IDFA —— 两份 MAMapKit 会产生 272 个 duplicate symbols，
+  # 链接阶段直接失败（ld: duplicate symbol ... MAMapKit vs AMapNaviKit）。
+  # 地图能力（MAMapView 等）由 AMapNaviKit 一并提供，头文件在
+  # AMapNaviKit/Headers/MAMapKit.h，已通过 bridging header 暴露。
   # 导航 SDK：官方导航视图（原版路线/红绿灯倒计时/电子眼/3D 车标）
   pod 'AMapNavi-NO-IDFA', '~> 11.0'
 end
