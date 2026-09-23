@@ -19,13 +19,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ── 所有脆弱步骤的输出都追加到这个日志 ──
+      # ⚠️ 2026-09-23 的教训：以前只有 Build 那步 tee 了 build.log，
+      # 结果 pod install / xcodegen 一失败，"Show build errors" 只打印
+      # 「build.log: No such file or directory」，白等一轮啥也看不出。
+      # 现在每个步骤都 tee 到 $CI_LOG，失败时最后统一定位。
+      - name: 准备日志
+        run: echo "CI_LOG=$RUNNER_TEMP/ci.log" >> "$GITHUB_ENV"
+
       - name: Show toolchain
         run: |
-          xcodebuild -version
-          swift --version
+          set -o pipefail
+          sw_vers | tee -a "$CI_LOG"
+          xcodebuild -version | tee -a "$CI_LOG"
+          swift --version | tee -a "$CI_LOG"
+          ruby --version | tee -a "$CI_LOG"
+          echo "xcodegen: $(command -v xcodegen || echo 未安装)" | tee -a "$CI_LOG"
+          echo "pod: $(command -v pod || echo 未安装)" | tee -a "$CI_LOG"
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: |
+          set -o pipefail
+          if command -v xcodegen >/dev/null 2>&1; then
+            echo "xcodegen 已自带" | tee -a "$CI_LOG"
+          else
+            brew install xcodegen 2>&1 | tee -a "$CI_LOG"
+          fi
+          xcodegen --version | tee -a "$CI_LOG"
 
       - name: Read version
         id: ver
@@ -33,26 +53,40 @@ jobs:
         run: |
           V=$(grep -m1 'MARKETING_VERSION' project.yml | sed 's/.*"\(.*\)".*/\1/')
           echo "marketing=$V" >> "$GITHUB_OUTPUT"
-          echo "版本号 = $V  (build ${{ github.run_number }})"
+          echo "版本号 = $V  (build ${{ github.run_number }})" | tee -a "$CI_LOG"
 
       - name: Generate Xcode project
         working-directory: ios
-        run: xcodegen generate
+        run: xcodegen generate 2>&1 | tee -a "$CI_LOG"
 
-      - name: Install CocoaPods
-        working-directory: ios
-        run: |
-          # 高德 SDK 只能通过 CocoaPods 拿
-          gem install cocoapods --no-document || brew install cocoapods
-          pod --version
-
+      # pod install 要联网拉高德 SDK（120MB+），网络抖一下就整轮白跑 —— 重试 3 次。
       - name: Install pods
         working-directory: ios
-        run: pod install
+        run: |
+          set -o pipefail
+          if ! command -v pod >/dev/null 2>&1; then
+            echo "没有 pod，先装 CocoaPods" | tee -a "$CI_LOG"
+            gem install cocoapods --no-document 2>&1 | tee -a "$CI_LOG" \
+              || brew install cocoapods 2>&1 | tee -a "$CI_LOG"
+            pod --version | tee -a "$CI_LOG"
+          fi
+          for i in 1 2 3; do
+            echo "======== pod install 第 $i 次 ========" | tee -a "$CI_LOG"
+            if pod install 2>&1 | tee -a "$CI_LOG"; then
+              exit 0
+            fi
+            echo "第 $i 次失败，10 秒后重试" | tee -a "$CI_LOG"
+            sleep 10
+          done
+          echo "pod install 连续 3 次失败" | tee -a "$CI_LOG"
+          exit 1
 
       - name: Check workspace
         working-directory: ios
-        run: test -d CarDash.xcworkspace && echo "workspace OK"
+        run: |
+          set -o pipefail
+          ls -la | tee -a "$CI_LOG"
+          ls -d CarDash.xcworkspace | tee -a "$CI_LOG"
 
       - name: Build app (unsigned)
         working-directory: ios
@@ -71,21 +105,40 @@ jobs:
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             build 2>&1 | tee build.log
 
-      - name: Show build errors
+      # ── 失败时的统一诊断 ──
+      # 先看「哪个 step 带红叉」，再看这里的输出；两处合起来就能定位。
+      - name: 失败诊断
         if: failure()
-        working-directory: ios
         run: |
           echo "================================================================"
-          echo "编译错误（error: 行）"
+          echo "失败诊断（先看上面哪个 step 带红叉）"
           echo "================================================================"
-          grep -n -E "error:|fatal error:|No such module" build.log | head -60 || true
           echo ""
-          echo "================================================================"
-          echo "日志尾部 120 行"
-          echo "================================================================"
-          tail -120 build.log || true
+          echo "---- 环境 ----"
+          sw_vers || true
+          xcodebuild -version || true
+          (pod --version || echo "pod 没装上") 2>&1
+          (xcodegen --version || echo "xcodegen 没装上") 2>&1
+          echo ""
+          echo "---- ios/ 目录 ----"
+          ls -la ios || true
+          echo ""
+          if [ -f ios/build.log ]; then
+            echo "---- 编译错误（error: 行）----"
+            grep -n -E "error:|fatal error:|No such module" ios/build.log | head -60 || true
+            echo ""
+            echo "---- build.log 尾部 120 行 ----"
+            tail -120 ios/build.log || true
+          else
+            echo "!! ios/build.log 不存在 ⇒ 失败发生在 Build app 之前"
+            echo "   （多半是 xcodegen generate / CocoaPods / pod install）"
+          fi
+          echo ""
+          echo "---- 各步骤日志（$CI_LOG）尾部 150 行 ----"
+          tail -150 "$CI_LOG" 2>/dev/null || echo "（$CI_LOG 是空的）"
 
       - name: Package unsigned IPA
+        if: success()
         working-directory: ios
         run: |
           APP=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)
@@ -98,6 +151,7 @@ jobs:
           ls -lh ../CarDash-unsigned.ipa
 
       - name: Upload artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: CarDash-unsigned-ipa
@@ -105,6 +159,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
