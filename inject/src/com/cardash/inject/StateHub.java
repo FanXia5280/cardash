@@ -49,6 +49,16 @@ public final class StateHub {
      */
     public volatile Integer speedLimit;
 
+    /**
+     * 前方电子眼：距离（米）／类型（高德 AMapNaviCameraType）／**该电子眼自己的限速**。
+     * iPhone 用它决定"两边要不要冒红"：只有 0 测速、8/9 区间测速这类**会拍限速的**，
+     * 且车速超过该电子眼限速（没给就用路段限速）时才冒。
+     * 三个都为 null = 前方没有电子眼上报（或者车机高德版本不发这些 key）。
+     */
+    public volatile Integer cameraDist;
+    public volatile Integer cameraType;
+    public volatile Integer cameraSpeed;
+
     // ── 转向灯（左右分开 + 合并状态，三个槽位，见 turnValue 的归一化）──
     /** 左转向灯亮着吗（null = 这个别名没在推数据） */
     public volatile Boolean turnLeft;
@@ -188,6 +198,20 @@ public final class StateHub {
                 speedLimit == null ? null : speedLimit.doubleValue()));
         b.append(",\"turn\":").append(Json.num(
                 turn == null ? null : turn.doubleValue()));
+        // 前方电子眼（距离/类型/该眼的限速）。iPhone 只认"会拍限速的类型"才冒红，
+        // 用户明确要求不要"超了路段限速就冒"那种误报。
+        b.append(",\"camera\":");
+        if (cameraDist != null || cameraType != null || cameraSpeed != null) {
+            b.append("{\"dist\":").append(Json.num(
+                        cameraDist == null ? null : cameraDist.doubleValue()))
+             .append(",\"type\":").append(Json.num(
+                        cameraType == null ? null : cameraType.doubleValue()))
+             .append(",\"speed\":").append(Json.num(
+                        cameraSpeed == null ? null : cameraSpeed.doubleValue()))
+             .append('}');
+        } else {
+            b.append("null");
+        }
 
         b.append(",\"music\":");
         if (mTitle != null || mArtist != null) {

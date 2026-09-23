@@ -398,16 +398,36 @@ final class DashboardModel: ObservableObject {
         return nil
     }
 
-    /// 超速了吗？
+    /// 前方电子眼（车机高德引导广播）
+    var displayCamera: CameraInfo? {
+        carFresh ? car?.camera : nil
+    }
+
+    /// 要不要"两边冒红"？
     ///
-    /// **自己算**，不用高德 SDK 的 `showOverSpeedPulse` ——
-    /// 那个头文件里写明是**收费接口**（要提工单向高德申请），
-    /// 而车机高德的广播里本来就带限速，拿来比一下就有了。
+    /// ⚠️ 用户 2026-09-24 提的关键点：**高德的红色脉冲是"会被拍限速的电子眼"才冒**，
+    /// 不是"超过当前道路限速就冒" —— 路上很多电子眼根本不测速（闯红灯、监控、
+    /// 公交道、应急车道…），按路段限速冒红会一路误报。
     ///
-    /// 留 2km/h 容差：GPS 车速和仪表本身有偏差，贴着限速跑不该一直报警。
-    /// 限速未知时一律 false —— 宁可不报，绝不误报。
+    /// 所以规则是：前方 300 米内**有电子眼** →
+    ///   ① 只看它是不是**测速类**（高德 `AMapNaviCameraType`：0 测速 / 8 区间测速起始 /
+    ///      9 区间测速终止；另外只要它自带限速值，也认定是测速类）；
+    ///   ② 再看车速有没有超过**该电子眼自己的限速**（它没给就用路段限速）+ 2km/h 容差。
+    /// 数据不全时一律 false —— 宁可不报，绝不误报。
+    ///
+    /// 这个判断**自己算**，不用高德 SDK 的 `showOverSpeedPulse`（那是收费接口，
+    /// 用户已明确只用官方免费功能）。
     var isOverspeed: Bool {
-        guard let l = displayLimit, let s = displaySpeed else { return false }
+        guard let s = displaySpeed, s.isFinite else { return false }
+        guard let cam = displayCamera, let d = cam.dist, d >= 0, d <= 300 else { return false }
+
+        let speedCamTypes = [0, 8, 9]
+        let isSpeedCamera = (cam.type.map { speedCamTypes.contains($0) } ?? false)
+            || (cam.speed ?? 0) > 0
+        guard isSpeedCamera else { return false }
+
+        let limit = (cam.speed ?? 0) > 0 ? cam.speed : displayLimit
+        guard let l = limit, l > 0 else { return false }
         return s > Double(l) + 2
     }
 

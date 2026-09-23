@@ -24,6 +24,8 @@ struct CarSnapshot: Codable, Equatable {
     /// 转向灯：0=灭 1=左 2=右 3=双闪（车机车身信号，见 VendorSignals.applyTurn）。
     /// 老版本车机 APK 不发这个字段 → nil → 不显示，不报错。
     var turn: Int?
+    /// 前方电子眼（车机高德引导广播）。null = 前方没有
+    var camera: CameraInfo?
     var music: MusicState?
     var nav: NavState?
     /// 各字段的来源，用于排查（vhal / none 等）
@@ -31,6 +33,18 @@ struct CarSnapshot: Codable, Equatable {
     /// 车机导航的目的地。Android 侧从车机语音助手的 NLU 日志里解析出来
     /// （见 DestSignals），有值就自动算路线画到地图上。
     var dest: Dest?
+}
+
+/// 前方电子眼（车机高德引导广播里的 CAMERA_*）。
+///
+/// `type` 用的是高德官方枚举 `AMapNaviCameraType`：
+///   0 测速 / 1 监控 / 2 闯红灯 / 3 违章 / 4 公交专用道 / 5 应急车道 /
+///   6 非机动车道 / 8 区间测速起始 / 9 区间测速终止
+/// `speed` 是**这个电子眼自己的限速**（不等于路段限速）—— 决定要不要冒红就看它。
+struct CameraInfo: Codable, Equatable {
+    var dist: Int?
+    var type: Int?
+    var speed: Int?
 }
 
 /// 路线的一段，带上高德给的路况。

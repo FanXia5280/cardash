@@ -93,6 +93,15 @@ public final class AmapSignals {
         int speed      = pickInt(i, -1, "EXTRA_CUR_SPEED", "CUR_SPEED");
         int limit      = pickInt(i, -1, "EXTRA_LIMIT_SPEED", "LIMITED_SPEED", "EXTRA_LIMITED_SPEED");
         int lights     = pickInt(i, -1, "EXTRA_TRAFFIC_LIGHT_NUM", "routeRemainTrafficLightNum");
+        // 电子眼：距离 / 类型 / 该电子眼的限速。iPhone 拿它决定"两边要不要冒红" ——
+        // 用户 2026-09-24 强调：高德的红色脉冲是**会被拍限速的电子眼**才冒，
+        // 不是超了路段限速就冒（很多电子眼根本不测速）。
+        // 类型枚举（高德官方 AMapNaviCameraType）：
+        //   0 测速 / 1 监控 / 2 闯红灯 / 3 违章 / 4 公交道 / 5 应急车道 / 6 非机动车道
+        //   8 区间测速起始 / 9 区间测速终止
+        int camDist    = pickInt(i, -1, "EXTRA_CAMERA_DIST", "CAMERA_DIST");
+        int camType    = pickInt(i, -1, "EXTRA_CAMERA_TYPE", "CAMERA_TYPE");
+        int camSpeed   = pickInt(i, -1, "EXTRA_CAMERA_SPEED", "CAMERA_SPEED");
 
         String eta     = pickStr(i, "EXTRA_ETA_TEXT", "ETA_TEXT");
         String curRoad = pickStr(i, "EXTRA_ROAD_NAME", "CUR_ROAD_NAME");
@@ -147,6 +156,15 @@ public final class AmapSignals {
         // 0 = 当前路段没有限速（高德约定），所以 0 要当成"清空"，别留着上一段的限速。
         if (limit >= 0) hub.speedLimit = (limit > 0) ? Integer.valueOf(limit) : null;
         if (limit > 0) hub.setSource("limit", String.valueOf(limit));
+
+        // 电子眼：每条引导广播覆盖一次（没有就置空 —— 车开过去之后必须消失，
+        // 不然会一直以为前方有测速）。iPhone 只看"会拍限速的类型 + 超速"来决定冒不冒红。
+        hub.cameraDist = (camDist >= 0) ? Integer.valueOf(camDist) : null;
+        hub.cameraType = (camType >= 0) ? Integer.valueOf(camType) : null;
+        hub.cameraSpeed = (camSpeed > 0) ? Integer.valueOf(camSpeed) : null;
+        if (camDist >= 0 || camType >= 0 || camSpeed >= 0) {
+            hub.setSource("camera", "dist=" + camDist + " type=" + camType + " speed=" + camSpeed);
+        }
         if (lights >= 0) hub.setSource("lights", String.valueOf(lights));
 
         hub.navActive = true;
