@@ -180,7 +180,9 @@ struct AMapNavView: UIViewRepresentable {
             let target = max(12, min(19, zoom + Self.autoZoomOffset(speed)))
             if target != lastZoom {
                 lastZoom = target
-                view.setZoomLevel(target, animated: true)
+                // ⚠️ 高德这个 setZoomLevel(_:animated:) 参数是 CGFloat，
+                // 但 zoomLevel 属性又是 double，两个类型不一致，得显式转
+                view.setZoomLevel(CGFloat(target), animated: true)
             }
 
             guard let raw = coord else { return }
