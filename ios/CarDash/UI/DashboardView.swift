@@ -39,7 +39,8 @@ struct DashboardView: View {
                 // 官方文档写明巡航只给数据、视图不跟车（实测停在默认位置＝北京）。
                 // 所以没目的地时回下面那套 MAMapView，但那边已经调成和这里同一套观感
                 // （`.naviNight` 底图 + 高德官方车标 + 同一组锚点）。
-                NaviKitNavView(from: model.coord, to: dest)
+                NaviKitNavView(from: model.coord, to: dest,
+                               simulate: model.isSimulating)
                     .ignoresSafeArea()
             } else {
                 // 兜底：用户没同意高德 SDK 的隐私协议时，只能用栅格/苹果地图。

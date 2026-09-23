@@ -205,6 +205,19 @@ enum AmapBundle {
 ///
 /// 坐标说明：MAMapView **原生就是 GCJ-02**，所以喂进来的 WGS-84
 /// 一定要先转（用 ChinaCoord），否则整体偏几百米。
+/// 带布局回调的 MAMapView：屏幕旋转 / 尺寸变化时**立刻**重算车头位置。
+///
+/// 和导航态那个 `AnchoredDriveView` 同一个原因：SwiftUI 在横竖屏切换时
+/// **不一定**会调 `updateUIView`（输入没变），但视图 bounds 已经变了 ⇒
+/// 车头会停在旧位置，用户看到的就是「切过来先错位、要等一会才归位」。
+final class AnchoredMapView: MAMapView {
+    var onLayout: (() -> Void)?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+
 struct AMapNavView: UIViewRepresentable {
 
     let coord: CLLocationCoordinate2D?      // WGS-84
@@ -227,7 +240,7 @@ struct AMapNavView: UIViewRepresentable {
                                     privacyInfo: AMapPrivacyInfoStatus.didContain)
         MAMapView.updatePrivacyAgree(AMapPrivacyAgreeStatus.didAgree)
 
-        let v = MAMapView(frame: .zero)
+        let v = AnchoredMapView(frame: .zero)
         v.delegate = context.coordinator
         // ⚠️ 用**导航样式**（MAMapTypeNavi / MAMapTypeNaviNight），不是普通样式：
         // 非导航态要和导航态（AMapNaviDriveView）看起来一样，底图配色得同一套
@@ -245,6 +258,11 @@ struct AMapNavView: UIViewRepresentable {
         v.isZoomEnabled = false
         v.isUserInteractionEnabled = false
         v.zoomLevel = Double(zoom)
+        // 旋转时立刻重摆车头位置（见 AnchoredMapView 的说明）
+        v.onLayout = { [weak v, weak co = context.coordinator] in
+            guard let v else { return }
+            co?.applyCamera(v)
+        }
         return v
     }
 
@@ -274,6 +292,41 @@ struct AMapNavView: UIViewRepresentable {
         private var lastZoom: Int = -1
         /// 车标箭头（高德那种蓝色导航箭头），一直钉在车辆位置上
         private var carPin: MAPointAnnotation?
+        /// 最近一次的位置（GCJ-02）和车头朝向 —— 屏幕旋转时要拿它重算相机
+        private var lastCoord: CLLocationCoordinate2D?
+        private var lastHeading: Double = 0
+
+        /// 把相机摆成「车落在 `MapAnchor` 指定位置」的样子。
+        ///
+        /// 除了定位更新，**每次 layout 也会调**（横竖屏切换 / 尺寸变化），
+        /// 所以它只能依赖 lastCoord / lastHeading，不能依赖"这次传进来的新位置"。
+        func applyCamera(_ view: MAMapView) {
+            guard let c = lastCoord else { return }
+            // MAMapView 没有"自车图标位置"这种能力（它的 screenAnchor 是**缩放**
+            // 锚点，不是内容锚点），所以自己反算：先把中心放到车上，
+            // 再看「想让车出现的那个屏幕点」现在压着哪个坐标，把中心平移过去。
+            //
+            // ⚠️ 千万别退回 1.6.10 那种「把地图视图画大再 offset」的 hack：
+            // SwiftUI 会把超大的子视图摆在父视图**左上角**，于是左/上露出一条
+            // 地图没盖住的黑边（用户截图里说的「黑的断层」），落点也是错的。
+            view.centerCoordinate = c
+            let w = view.bounds.width
+            let h = view.bounds.height
+            if w > 1, h > 1 {
+                let a = MapAnchor.of(size: view.bounds.size)
+                let at = view.convert(CGPoint(x: w * a.x, y: h * a.y),
+                                      toCoordinateFrom: view)
+                let dLat = c.latitude - at.latitude
+                let dLon = c.longitude - at.longitude
+                // 偏移量必须小得合理 —— 地图还没渲染好时 convert 可能返回垃圾
+                if abs(dLat) < 0.02, abs(dLon) < 0.02 {
+                    view.centerCoordinate = CLLocationCoordinate2D(
+                        latitude: c.latitude + dLat,
+                        longitude: c.longitude + dLon)
+                }
+            }
+            view.rotationDegree = CGFloat(lastHeading)   // 车头朝上（和导航态一致）
+        }
 
         func update(view: MAMapView,
                     coord: CLLocationCoordinate2D?,
@@ -305,36 +358,12 @@ struct AMapNavView: UIViewRepresentable {
 
             guard let raw = coord else { return }
             let c = ChinaCoord.toGcj(raw)
+            lastCoord = c
+            lastHeading = heading
             let key = "\(c.latitude),\(c.longitude),\(Int(heading))"
             if key != lastKey {
                 lastKey = key
-
-                // ── 把车放到屏幕的指定位置（和导航态的 screenAnchor 同步）──
-                // MAMapView 没有"自车图标位置"这种能力（它的 screenAnchor 是**缩放**
-                // 锚点，不是内容锚点），所以自己反算：先把中心放到车上，
-                // 再看「想让车出现的那个屏幕点」现在压着哪个坐标，把中心平移过去。
-                //
-                // ⚠️ 千万别退回 1.6.10 那种「把地图视图画大再 offset」的 hack：
-                // SwiftUI 会把超大的子视图摆在父视图**左上角**，于是左/上露出一条
-                // 地图没盖住的黑边（用户截图里说的「黑的断层」），落点也是错的。
-                view.centerCoordinate = c
-                let w = view.bounds.width
-                let h = view.bounds.height
-                if w > 1, h > 1 {
-                    let a = MapAnchor.of(size: view.bounds.size)
-                    let at = view.convert(CGPoint(x: w * a.x, y: h * a.y),
-                                          toCoordinateFrom: view)
-                    let dLat = c.latitude - at.latitude
-                    let dLon = c.longitude - at.longitude
-                    // 偏移量必须小得合理 —— 地图还没渲染好时 convert 可能返回垃圾
-                    if abs(dLat) < 0.02, abs(dLon) < 0.02 {
-                        view.centerCoordinate = CLLocationCoordinate2D(
-                            latitude: c.latitude + dLat,
-                            longitude: c.longitude + dLon)
-                    }
-                }
-
-                view.rotationDegree = CGFloat(heading)   // 车头朝上（和导航态一致）
+                applyCamera(view)
                 // 俯角交给动画，免得每秒硬跳一次看着卡
                 UIView.animate(withDuration: 0.9, delay: 0,
                                options: [.curveLinear, .beginFromCurrentState]) {

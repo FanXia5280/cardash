@@ -4,32 +4,48 @@ import UIKit
 import CoreLocation
 import AMapNaviKit
 
+/// 带布局回调的导航视图：屏幕旋转 / 尺寸变化时**立刻**重算自车图标位置。
+///
+/// 为什么要这个：SwiftUI 在横竖屏切换时**不一定**会调 `updateUIView`
+/// （它的输入坐标没变），而视图 bounds 已经变了 ⇒ `screenAnchor` 还停在
+/// 旧方向那一档，看起来就是「切过来先错位、要等一会（下次定位更新）才归位」。
+/// 用户实测就是这个现象。在 `layoutSubviews` 里补一次，同一帧内就摆正了。
+final class AnchoredDriveView: AMapNaviDriveView {
+    var onLayout: (() -> Void)?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+
 /// 高德**官方导航视图**（AMapNaviDriveView）—— 有目的地时整屏接管仪表背景。
 ///
-/// 原版路线纹理、3D 车标、红绿灯倒计时、电子眼，全是 SDK 自带，不自己画。
+/// 原版路线纹理、红绿灯倒计时、电子眼、车标全是 SDK 自带，不自己画。
 ///
-/// ⚠️ 2026-09-23 深夜：试过「没目的地时也用这个 view，靠巡航模式跟车」——
-/// **不行**。官方文档《开发指南 → 专业导航 → 智能巡航》明确写了：
-/// 巡航只提供电子眼/道路设施**数据**，地图视图**不会**自己跟车，
-/// 官方给的巡航 UI 方案是「自己建 MAMapView + Annotation + 用 updateNaviLocation 更新坐标」。
-/// 实测也是那样：巡航态下这个 view 停在默认位置（北京）、连车标都没有。
-/// 所以没目的地时走 `AMapNavView`（MAMapView），那边已经调成和这里同一套观感
-/// （`.naviNight` 底图 + 高德官方车标 + 同一组锚点）。
+/// ⚠️ 2026-09-23 半夜试过「没目的地时也用这个 view，靠巡航模式跟车」—— **不行**。
+/// 官方文档《智能巡航》写明：巡航只提供电子眼/道路设施**数据**，地图视图**不跟车**，
+/// 官方给的巡航 UI 方案是「自己建 MAMapView + Annotation」。实测那次停在默认位置（北京）。
+/// 所以没目的地时走 `AMapNavView`（MAMapView），那边已调成同一套观感。
 struct NaviKitNavView: UIViewRepresentable {
     let from: CLLocationCoordinate2D?     // WGS-84 当前位置
     let to: CLLocationCoordinate2D?       // WGS-84 目的地
+    /// true = 用 SDK 的**模拟导航**（`startEmulatorNavi`）沿路线自动跑 ——
+    /// 就是官方 doc 说的那种"预先了解既定路线的路况、电子眼"的效果。
+    var simulate: Bool = false
 
     func makeUIView(context: Context) -> AMapNaviDriveView {
-        // Key 和隐私接口在 App 启动时已经设置过；这里再设一遍是幂等的，
-        // 防止「一打开就有目的地、普通地图还没初始化过」的时序
+        // Key 和隐私接口在 App 启动时已经设置过；这里再设一遍是幂等的
         AMapServices.shared().apiKey = AMapConfig.iOSKey
         AMapServices.shared().enableHTTPS = true
 
-        // 不配置任何属性 —— AMapNaviDriveView 的默认样式就是官方导航
-        // （原版路线纹理、红绿灯、电子眼、3D 车模、自动车头朝上）
-        let v = AMapNaviDriveView(frame: CGRect.zero)
+        let v = AnchoredDriveView(frame: CGRect.zero)
         v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         v.delegate = context.coordinator
+        // 旋转时立刻重摆车头位置（见 AnchoredDriveView 的说明）
+        v.onLayout = { [weak v, weak co = context.coordinator] in
+            guard let v else { return }
+            co?.applyAnchor(view: v)
+        }
 
         // 只要路线本身。高德导航视图默认会把整套控件都画上
         // （转向面板、退出/设置按钮、右侧光柱条、全览按钮、比例尺），
@@ -52,16 +68,14 @@ struct NaviKitNavView: UIViewRepresentable {
         }
 
         context.coordinator.attach(view: v)
-        context.coordinator.plan(from: from, to: to)
+        context.coordinator.update(view: v, from: from, to: to, simulate: simulate)
         return v
     }
 
     func updateUIView(_ v: AMapNaviDriveView, context: Context) {
         // 自车图标位置随屏幕方向走（横屏靠右 / 竖屏靠下）
         context.coordinator.applyAnchor(view: v)
-        // 把当前位置持续喂给引擎，别让它自己慢慢搜星
-        context.coordinator.feed(from: from)
-        context.coordinator.plan(from: from, to: to)
+        context.coordinator.update(view: v, from: from, to: to, simulate: simulate)
     }
 
     func makeCoordinator() -> NaviCoordinator { NaviCoordinator() }
@@ -70,7 +84,7 @@ struct NaviKitNavView: UIViewRepresentable {
     ///
     /// 高德的单例（AMapNaviDriveManager）第一次创建要初始化整套引擎，
     /// 是**同步阻塞**的 —— 用户实测「点模拟导航会卡一下」就是这个。
-    /// 放到 App 启动时空跑一次，点导航时就不卡了。
+    /// 放到 App 启动时（启动遮罩后面）空跑一次，之后就顺了。
     static func prewarm() {
         DispatchQueue.main.async {
             AMapServices.shared().apiKey = AMapConfig.iOSKey
@@ -87,9 +101,12 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
 
     private weak var view: AMapNaviDriveView?
     private var manager: AMapNaviDriveManager?
-    /// 上一次算路的 (起点纬,起经,终纬,终经)，目的地/位置没大变就不重算
-    private var planned: (Double, Double, Double, Double)?
-    private var naviStarted = false
+    /// 上一次算路的**目的地**（只跟终点的纬经度有关）
+    private var plannedDest: (Double, Double)?
+    private var plannedSimulate: Bool?
+    /// 当前引擎是怎么跑起来的：nil / "gps"（实时导航）/ "emulator"（模拟导航）
+    private var startedMode: String?
+    private var simulate = false
     /// 上一次喂给引擎的位置（没动就不重复喂）
     private var lastFed: CLLocationCoordinate2D?
 
@@ -114,7 +131,9 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
     /// `setExternalLocation` 直接告诉引擎「你在这儿」，一刻都不用等。
     ///
     /// ⚠️ isAMapCoordinate 传 NO = 我们喂的是 WGS-84（内部坐标统一 WGS-84）。
+    /// ⚠️ **模拟导航时绝不能喂** —— 那会把模拟车拽回真实位置，模拟就跑不动了。
     func feed(from: CLLocationCoordinate2D?) {
+        guard !simulate else { return }
         guard let m = manager, let f = from else { return }
         if let l = lastFed,
            abs(l.latitude - f.latitude) < 1e-6, abs(l.longitude - f.longitude) < 1e-6 {
@@ -125,15 +144,33 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
                               isAMapCoordinate: false)
     }
 
-    func plan(from: CLLocationCoordinate2D?, to: CLLocationCoordinate2D?) {
-        guard let f = from, let t = to else { return }
-        let key = (f.latitude, f.longitude, t.latitude, t.longitude)
-        if let p = planned,
-           abs(p.0 - key.0) < 5e-5, abs(p.1 - key.1) < 5e-5,
-           abs(p.2 - key.2) < 5e-5, abs(p.3 - key.3) < 5e-5 {
+    func update(view: AMapNaviDriveView, from: CLLocationCoordinate2D?,
+                to: CLLocationCoordinate2D?, simulate: Bool) {
+        self.simulate = simulate
+
+        guard let t = to else {
+            // 目的地没了：把引擎停掉，别让导航/模拟在后台空转（费电）
+            if let m = manager, startedMode != nil {
+                m.stopNavi()
+                startedMode = nil
+                plannedDest = nil
+                plannedSimulate = nil
+            }
             return
         }
-        planned = key
+        guard let f = from else { return }
+        feed(from: f)
+
+        // ── 只有**目的地变了**（或模拟开关变了）才重新算路 ──
+        // ⚠️ 千万别把起点也算进 key：车一动就重算路线，白费流量，还会把导航重置
+        //（1.6.12 之前就是这么写的，等于每开 5 米重算一次）。
+        if let p = plannedDest,
+           abs(p.0 - t.latitude) < 5e-5, abs(p.1 - t.longitude) < 5e-5,
+           plannedSimulate == simulate {
+            return
+        }
+        plannedDest = (t.latitude, t.longitude)
+        plannedSimulate = simulate
 
         let m = manager ?? AMapNaviDriveManager.sharedInstance()
         if manager == nil {
@@ -147,7 +184,6 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
             m.pauseNaviSpeech()
             manager = m
         }
-        feed(from: f)
 
         // 导航 SDK 的坐标是 GCJ-02，我们内部统一存 WGS-84，转一道
         let g1 = ChinaCoord.toGcj(f)
@@ -160,15 +196,28 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
                               drivingStrategy: .drivingStrategySingleDefault)
     }
 
-    /// 算路成功 → 开始真实 GPS 导航（只启动一次）
+    /// 算路成功 → 启动导航。
     ///
-    /// ⚠️ `startGPSNavi` 头文件原话「必须在路径规划成功的情况下，才能够开始实时导航」，
-    /// 所以它只能在这个回调里调，别挪到别处。
+    /// ⚠️ `startGPSNavi` / `startEmulatorNavi` 头文件都要求「**必须在路径规划成功的情况下**」
+    /// 才能调用，所以只能在这个回调里调，别挪别处。
+    ///
+    /// 模拟导航按官方文档实现（《实时导航与模拟导航》）：
+    /// 「模拟导航的实现步骤与实时导航基本一致，区别就是在路径规划成功的回调函数中
+    ///   调用 startEmulatorNavi 方法开启模拟导航。」
     func driveManager(_ driveManager: AMapNaviDriveManager,
                       onCalculateRouteSuccessWith type: AMapNaviRoutePlanType) {
-        guard !naviStarted else { return }
-        naviStarted = true
-        driveManager.startGPSNavi()
+        if simulate {
+            if startedMode == "gps" { driveManager.stopNavi() }   // 换模式前先停
+            guard startedMode != "emulator" else { return }
+            startedMode = "emulator"
+            driveManager.setEmulatorNaviSpeed(60)                 // 官方默认 60 km/h
+            driveManager.startEmulatorNavi()
+        } else {
+            if startedMode == "emulator" { driveManager.stopNavi() }
+            guard startedMode != "gps" else { return }
+            startedMode = "gps"
+            driveManager.startGPSNavi()
+        }
     }
 }
 #endif

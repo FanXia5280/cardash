@@ -38,6 +38,11 @@ final class DashboardModel: ObservableObject {
     /// 没连车机时这三格是空的，用户就看不出来排版对不对 —— 所以模拟时自己填一份。
     @Published private(set) var mockNav: NavState?
 
+    /// 现在是「模拟导航」测试模式吗（点了设置里那条「模拟一条导航路线」）。
+    /// 真导航用 SDK 的实时导航（startGPSNavi），模拟模式用官方**模拟导航**
+    /// （startEmulatorNavi，沿路线自动跑一遍，能看路况和电子眼）—— 见 NaviKitNavView。
+    var isSimulating: Bool { mockDest != nil }
+
     // MARK: - 设置
     @Published var host: String {
         didSet {
