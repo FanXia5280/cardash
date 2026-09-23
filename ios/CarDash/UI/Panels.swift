@@ -1,6 +1,33 @@
 import SwiftUI
 import UIKit
 
+// MARK: - HUD 卡片底
+
+/// 半透明深色圆角底。
+///
+/// 背景换成地图之后，白字直接压在浅色路网上会糊掉，
+/// 所以统一加一层薄底 —— 参考图里的元素也都是这么处理的。
+struct HudCard: ViewModifier {
+    let scale: CGFloat
+    let padding: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, scale * 11 * padding)
+            .padding(.vertical, scale * 6 * padding)
+            .background(
+                RoundedRectangle(cornerRadius: scale * 11, style: .continuous)
+                    .fill(Color.black.opacity(0.40))
+            )
+    }
+}
+
+extension View {
+    func hudCard(_ scale: CGFloat, padding: CGFloat = 1.0) -> some View {
+        modifier(HudCard(scale: scale, padding: padding))
+    }
+}
+
 // MARK: - 封面解码缓存
 
 /// 车机每 250ms 就会把同一张封面的 base64 重发一遍，这里做一层单条缓存，
@@ -295,9 +322,14 @@ struct MusicPanel: View {
     }
 }
 
-// MARK: - 右中：导航信息
+// MARK: - 正下方：转向卡
 
-struct NavigationPanel: View {
+/// 对应参考图底部中央那块「🚗 110米 / 进入南海路」。
+///
+/// 从原来的**右中栏**挪到**正下方**：一是右下角离视线远，二是背景换成地图后
+/// 右边要留给地图，导航信息压在地图旁边看不清。
+/// 现在做成一张独立的卡，开车时低头一眼就能看到。
+struct TurnCard: View {
     let nav: NavState?
     let scale: CGFloat
 
@@ -312,55 +344,34 @@ struct NavigationPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: scale * 5) {
-            if active {
-                // ── 转向图标 + 下一个动作的距离（对应参考图红框里最醒目的那行）──
-                HStack(alignment: .center, spacing: scale * 10) {
-                    Image(systemName: nav?.symbolName ?? "arrow.up")
-                        .font(.system(size: scale * 30, weight: .bold))
-                        .foregroundStyle(Color(hex: 0x8FD8FF))
+        HStack(spacing: scale * 13) {
+            Image(systemName: nav?.symbolName ?? "arrow.up")
+                .font(.system(size: scale * 34, weight: .bold))
+                .foregroundStyle(Color(hex: 0x8FD8FF))
+                .frame(width: scale * 42, height: scale * 42)
 
-                    Text(nav?.distance ?? nav?.title ?? "--")
-                        .font(.system(size: scale * 32, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.45)
-                }
+            VStack(alignment: .leading, spacing: scale * 1) {
+                Text(nav?.distance ?? nav?.title ?? "--")
+                    .font(.system(size: scale * 26, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
 
-                // 「怎么走」——车机上高德卡片写的是「进入 天高路」，
-                // 这里保持同样的说法，和车机对得上。
                 if let road {
                     Text("进入 \(road)")
-                        .font(.system(size: scale * 18, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.96))
+                        .font(.system(size: scale * 15, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .minimumScaleFactor(0.6)
                 }
-
-                // 当前所在道路，弱化处理
-                if let a = nav?.after, !a.isEmpty {
-                    Text(a)
-                        .font(.system(size: scale * 12.5, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                }
-            } else {
-                HStack(spacing: scale * 10) {
-                    Image(systemName: "location.slash")
-                        .font(.system(size: scale * 22, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
-                    Text("暂无导航")
-                        .font(.system(size: scale * 22, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                Text("请在车机开启导航")
-                    .font(.system(size: scale * 13, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.55))
             }
         }
+        .hudCard(scale, padding: 1.3)
+        // 没导航时整块淡出，但保留占位，避免布局跳动
+        .opacity(active ? 1 : 0)
+        .animation(.easeInOut(duration: 0.2), value: active)
         .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
     }
 }

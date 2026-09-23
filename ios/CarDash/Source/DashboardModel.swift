@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CoreLocation
 
 /// 仪表盘数据中枢：合并「车机桥接推送」与「本机传感器」两路数据。
 /// 车机数据优先，取不到时自动退回本机 GPS。
@@ -15,6 +16,15 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var localAltitude: Double?
     @Published private(set) var localOdometer: Double = 0
     @Published private(set) var locationDenied = false
+
+    // MARK: - 地图
+    /// 车辆当前位置（本机 GPS）。地图还没定位到时为 nil。
+    @Published private(set) var coord: CLLocationCoordinate2D?
+    /// 车头方向（度）。地图「车头朝上」用。
+    @Published private(set) var heading: Double = 0
+    /// 已行驶轨迹。上限 900 个点，按 8 米一个点采样，
+    /// 够画十几公里的轨迹，又不会让地图重绘变慢。
+    @Published private(set) var track: [CLLocationCoordinate2D] = []
 
     // MARK: - 设置
     @Published var host: String {
@@ -108,6 +118,23 @@ final class DashboardModel: ObservableObject {
         }
         sensors.onDenied = { [weak self] in
             self?.locationDenied = true
+        }
+        sensors.onFix = { [weak self] loc in
+            guard let self else { return }
+            self.coord = loc.coordinate
+            // course 只有在移动时才有效（静止时是 -1），
+            // 无效就保持上一次的车头方向，免得地图乱转
+            if loc.course >= 0 { self.heading = loc.course }
+
+            if let last = self.track.last {
+                let d = CLLocation(latitude: last.latitude, longitude: last.longitude)
+                    .distance(from: loc)
+                if d < 8 { return }          // 太近的点不要，否则轨迹会糊成一团
+            }
+            self.track.append(loc.coordinate)
+            if self.track.count > 900 {
+                self.track.removeFirst(self.track.count - 900)
+            }
         }
         sensors.start()
 
@@ -307,13 +334,13 @@ final class DashboardModel: ObservableObject {
 
     var isCarOnline: Bool { carFresh }
 
-    /// 车速只信车机，不再退回本机 GPS。
+    /// 车速 —— **只用本机 GPS**。
     ///
-    /// 车机时速和 iPhone 的 GPS 时速在高架、隧道、地库里会互相打架，
-    /// 两个数字来回跳看着很难受，所以干脆只显示车机的；车机断连时
-    /// 显示 "--" 而不是另一个来源的数字，避免误读。
+    /// 用户要求把车机那套车速来源（实时别名推送 / 缓存快照 / 高德广播）
+    /// 全部不用，只认 iPhone 自己的 GPS。车机端的车速仍然会采集，
+    /// 但只写进诊断信息，不再参与显示。
     var displaySpeed: Double? {
-        guard carFresh, let s = car?.speed, s.isFinite, s >= 0 else { return nil }
+        guard let s = localSpeed, s.isFinite, s >= 0 else { return nil }
         return s
     }
 
@@ -352,5 +379,12 @@ final class DashboardModel: ObservableObject {
 
     var displayNav: NavState? {
         carFresh ? car?.nav : nil
+    }
+
+    /// 地图能不能显示。定位被拒或还没定位到就显示占位背景。
+    var mapUnavailableReason: String? {
+        if locationDenied { return "定位权限被拒绝，地图不可用" }
+        if coord == nil { return "正在定位…" }
+        return nil
     }
 }

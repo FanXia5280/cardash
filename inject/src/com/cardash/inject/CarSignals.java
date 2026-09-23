@@ -112,7 +112,7 @@ public final class CarSignals {
             case PERF_VEHICLE_SPEED:
             case PERF_VEHICLE_SPEED_DISPLAY:
                 if (d >= 0) {
-                    hub.speedKmh = d * 3.6;
+                    hub.carSpeedKmh = d * 3.6;
                     hub.setSource("speed", "vhal");
                 }
                 break;

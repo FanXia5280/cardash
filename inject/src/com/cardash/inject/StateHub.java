@@ -17,7 +17,19 @@ public final class StateHub {
 
     // ── 车辆信号 ──
     /** km/h */
-    public volatile Double speedKmh;
+    /**
+     * 车机车速。
+     *
+     * ⚠️ **不参与显示**。
+     *
+     * 用户要求仪表上的车速只用 iPhone 自己的 GPS，所以车机侧采集到的速度
+     * 一律只落在这里，通过 /state 的 carSpeed 和 /diag 暴露出来做对照，
+     * 绝不会画到仪表上。
+     *
+     * 想改回「用车机车速」：把 iOS 侧 DashboardModel.displaySpeed
+     * 换回 car?.speed 就行，车机这边不用动。
+     */
+    public volatile Double carSpeedKmh;
     /** P / R / N / D */
     public volatile String gear;
     /** 电量百分比 0~100 */
@@ -113,7 +125,9 @@ public final class StateHub {
         b.append('{');
         b.append("\"v\":1");
         b.append(",\"ts\":").append(System.currentTimeMillis());
-        b.append(",\"speed\":").append(Json.num(speedKmh));
+        // 车速不下发 —— 仪表只用 iPhone 自己的 GPS。
+        // 车机测到的值放在 carSpeed 里，仅供诊断对照。
+        b.append(",\"carSpeed\":").append(Json.num(carSpeedKmh));
         b.append(",\"gear\":").append(Json.esc(gear));
         b.append(",\"soc\":").append(Json.num(soc));
         b.append(",\"range\":").append(Json.num(rangeKm));

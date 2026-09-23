@@ -5,6 +5,10 @@ import CoreLocation
 final class LocalSensors: NSObject, CLLocationManagerDelegate {
 
     var onUpdate: ((Double?, Double?, Double) -> Void)?
+    /// 原始定位（坐标 + 车头方向），给地图用。
+    /// 和 onUpdate 分开一路：地图需要的是原始 CLLocation，
+    /// 而仪表那条链路已经在做「累计里程」之类的加工，混在一起会互相牵制。
+    var onFix: ((CLLocation) -> Void)?
     var onDenied: (() -> Void)?
 
     private let manager = CLLocationManager()
@@ -58,6 +62,7 @@ final class LocalSensors: NSObject, CLLocationManagerDelegate {
         let speedKmh = loc.speed >= 0 ? loc.speed * 3.6 : nil
         let altitude = loc.verticalAccuracy > 0 ? loc.altitude : nil
         onUpdate?(speedKmh, altitude, meters / 1000.0)
+        onFix?(loc)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

@@ -197,7 +197,7 @@ public final class LogcatSignals {
     private void apply(StateHub hub, String topic, int id, double v) {
         // 1) 优先按信号名匹配
         if (T_SPEED.equals(topic)) {
-            hub.speedKmh = v * 3.6;          // VHAL 车速单位是 m/s
+            hub.carSpeedKmh = v * 3.6;          // VHAL 车速单位是 m/s
             hub.setSource("speed", "logcat:" + topic);
             return;
         }
@@ -238,7 +238,7 @@ public final class LogcatSignals {
         switch (id) {
             case ID_SPEED:
             case ID_SPEED_DISP:
-                hub.speedKmh = v * 3.6;
+                hub.carSpeedKmh = v * 3.6;
                 hub.setSource("speed", "logcat:id");
                 break;
             case ID_GEAR:

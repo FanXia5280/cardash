@@ -266,7 +266,7 @@ public final class BridgeRuntime {
         sb.append("  → iPhone 上填: ").append(primaryUrl()).append("\n\n");
 
         sb.append("实时数据:\n");
-        sb.append("  车速   ").append(fmt(hub.speedKmh, " km/h")).append('\n');
+        sb.append("  车速   ").append(fmt(hub.carSpeedKmh, " km/h")).append("（车机值，仅诊断）").append('\n');
         sb.append("  档位   ").append(hub.gear == null ? "--" : hub.gear).append('\n');
         sb.append("  电量   ").append(fmt(hub.soc, " %")).append('\n');
         sb.append("  续航   ").append(fmt(hub.rangeKm, " km")).append('\n');
@@ -376,7 +376,7 @@ public final class BridgeRuntime {
         sb.append(lc == null ? "  （未启动）\n" : lc.missSampleText());
 
         sb.append("\n当前解析出的值\n");
-        sb.append("  车速   ").append(hub.speedKmh == null ? "--" : String.valueOf(hub.speedKmh)).append('\n');
+        sb.append("  车速   ").append(hub.carSpeedKmh == null ? "--" : String.valueOf(hub.carSpeedKmh)).append("（车机值，仅诊断）").append('\n');
         sb.append("  档位   ").append(hub.gear == null ? "--" : hub.gear).append('\n');
         sb.append("  电量   ").append(hub.soc == null ? "--" : String.valueOf(hub.soc)).append('\n');
         sb.append("  续航   ").append(hub.rangeKm == null ? "--" : String.valueOf(hub.rangeKm)).append('\n');
@@ -404,15 +404,17 @@ public final class BridgeRuntime {
           .append(hub.src.get("lyrics") == null ? "（还没取）" : hub.src.get("lyrics"))
           .append('\n');
 
-        sb.append("\n【车速（只用原车数据，高德车速已禁用）】\n");
-        sb.append("  当前来源  = ")
-          .append(hub.src.get("speed") == null ? "（还没拿到）" : hub.src.get("speed")).append('\n');
+        sb.append("\n【车速】\n");
+        sb.append("  仪表车速  = iPhone 本机 GPS（车机车速一律不采用）\n");
+        sb.append("  车机测到的 = ")
+          .append(hub.carSpeedKmh == null ? "（还没拿到）" : String.valueOf(hub.carSpeedKmh)).append(" km/h")
+          .append("   来源 ").append(hub.src.get("speed") == null ? "?" : hub.src.get("speed")).append('\n');
         sb.append("  来源活性  = ")
-          .append(hub.src.get("speedSrc") == null ? "?" : hub.src.get("speedSrc")).append('\n');
-        sb.append("  高德车速  = ")
+          .append(hub.src.get("carSpeedSrc") == null ? "?" : hub.src.get("carSpeedSrc")).append('\n');
+        sb.append("  高德广播的 = ")
           .append(hub.src.get("amapSpeed") == null ? "（没收到）" : hub.src.get("amapSpeed"))
           .append('\n');
-        sb.append("  说明: 实时别名推送 > currentDrivingSpeedKmh(会变) > 缓存快照(保底)\n");
+        sb.append("  说明: 以上都只做诊断对照，屏幕上显示的是 GPS 车速\n");
 
         sb.append("\n【高德导航广播（导航数据的主力来源）】\n");
         sb.append(AmapSignals.rawSummary());

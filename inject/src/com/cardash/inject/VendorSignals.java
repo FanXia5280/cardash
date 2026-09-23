@@ -477,9 +477,10 @@ public final class VendorSignals {
         //    档位/车速/总里程/续航都在里面，先把保底数据拿到手。
         readCache(hub);
         readSpeedField(hub);
-        hub.setSource("speedSrc", "实时推送=" + (speedAliasFresh() ? "在用" : (speedAliasLive ? "已断供" : "没收到"))
+        hub.setSource("carSpeedSrc",
+                "实时推送=" + (speedAliasFresh() ? "在用" : (speedAliasLive ? "已断供" : "没收到"))
                 + " 字段=" + (speedFieldLive ? "在用" : "没动过")
-                + "（高德车速已禁用）");
+                + "（车机车速仅诊断，仪表用 iPhone GPS）");
 
         // 2) 电量百分比：车机实测不上报 EnergyInfo/SocPercent（psGetValueSync
         //    对全部 1276 个别名都返回 null），所以按用户要求用剩余续航折算。
@@ -641,7 +642,7 @@ public final class VendorSignals {
             Double d = num(raw);
             if (d == null || d < 0) return false;
             // 别名就带 Kmh 字样，按 km/h 处理；数值明显过小才当成 m/s
-            hub.speedKmh = d < 0.5 && d > 0 && isProbablyMs(raw) ? d * 3.6 : d;
+            hub.carSpeedKmh = d < 0.5 && d > 0 && isProbablyMs(raw) ? d * 3.6 : d;
             // 车机主动推过来的实时值，是三个原车来源里最新鲜的一个
             speedAliasLive = true;
             speedAliasAt = System.currentTimeMillis();
@@ -765,7 +766,7 @@ public final class VendorSignals {
                 // 只要已经有更活的来源（实时推送 / currentDrivingSpeedKmh），
                 // 就绝不让它覆盖；完全没有时才拿它当保底。
                 if (!speedAliasFresh() && !speedFieldLive) {
-                    hub.speedKmh = d;
+                    hub.carSpeedKmh = d;
                     hub.setSource("speed", "cache:" + field);
                 }
             } else if ("odometer".equals(kind)) {
@@ -940,7 +941,7 @@ public final class VendorSignals {
         }
 
         if (speedFieldLive) {
-            hub.speedKmh = d;
+            hub.carSpeedKmh = d;
             hub.setSource("speed", "field:currentDrivingSpeedKmh");
         }
     }
