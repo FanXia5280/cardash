@@ -31,6 +31,11 @@ struct DashboardView: View {
             if let reason = model.mapUnavailableReason {
                 MapPlaceholder(reason: reason)
                     .ignoresSafeArea()
+            } else if let dest = model.routeDest, amapAgreed {
+                // 车机报了目的地：整屏交给高德官方导航视图。
+                // 原版路线、3D 车标、红绿灯倒计时、电子眼，全是 SDK 自带。
+                NaviKitNavView(from: model.coord, to: dest)
+                    .ignoresSafeArea()
             } else {
                 DashboardMapView(coord: model.coord,
                                  heading: model.heading,

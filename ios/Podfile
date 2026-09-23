@@ -21,4 +21,6 @@ target 'CarDash' do
   #
   # 本工程里所有 MAMapView 调用都是按 11.x 的头文件写的。
   pod 'AMap3DMap-NO-IDFA', '~> 11.0'
+  # 导航 SDK：官方导航视图（原版路线/红绿灯倒计时/电子眼/3D 车标）
+  pod 'AMapNavi-NO-IDFA', '~> 11.0'
 end
