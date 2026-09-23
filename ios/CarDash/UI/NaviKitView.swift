@@ -83,6 +83,9 @@ struct NaviKitNavView: UIViewRepresentable {
         v.showCameraDistance = true
         // 3) 红绿灯**图标**（默认 YES、免费）
         v.showTrafficLights = true
+        // 4) 牵引线（起点到终点那根"飞线"）——头文件：「是否显示牵引线,默认YES」。
+        //    用户 2026-09-24 明确要求关掉（那根线在实际导航里是干扰）。
+        v.showVectorline = false
         // ⛔ 红绿灯**倒计时**（showTrafficLightView）与超速脉冲（showOverSpeedPulse）
         //    都是**收费接口**：用户 2026-09-24 明确要求"只用官方 SDK 的免费功能" ⇒ 不开。
         //    要开得提高德商务合作工单（价格不公开，见交接文档待办 9）。
@@ -281,8 +284,13 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
     /// ⚠️ 前提是 driveView 的 `showCrossImage` 必须是 **false**
     /// （头文件：「自定义View中如果设置了showCrossImage为YES，回调中crossImage为nil」）。
     /// 显示/隐藏的时机由 SDK 判断，我们只管把图摆到"速度"那一格去。
+    /// ⚠️ Swift 里这个方法叫 `showCross`**不是** `showCrossImage`：
+    /// 参数类型本来就是 UIImage，Swift 会把多余的 "Image" 省掉，
+    /// 写成 `showCrossImage:` 直接编译报错
+    ///（2026-09-24 CI 挂的就是这条：'driveManager(_:showCrossImage:)' has been renamed to
+    ///  'driveManager(_:showCross:)'）。ObjC 侧的选择子仍然是 `showCrossImage:`，别改错方向。
     func driveManager(_ driveManager: AMapNaviDriveManager,
-                      showCrossImage crossImage: UIImage?) {
+                      showCross crossImage: UIImage?) {
         guard let crossImage else { return }
         onCrossImage?(crossImage)
     }
