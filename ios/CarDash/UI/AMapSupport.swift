@@ -111,7 +111,7 @@ struct AMapNavView: UIViewRepresentable {
         // 官方夜景样式 —— 不用再自己反相了
         v.mapType = .standardNight
         // 实时路况（参考图里那些红黄绿的路段）
-        v.showTraffic = true
+        v.isShowTraffic = true
         v.showsUserLocation = false
         v.showsCompass = false
         v.showsScale = false
@@ -140,6 +140,7 @@ struct AMapNavView: UIViewRepresentable {
         private var routeCount = -1
         private var pin: MAPointAnnotation?
         private var lastKey: String?
+        private var lastDestKey: String?
 
         func update(view: MAMapView,
                     coord: CLLocationCoordinate2D?,
@@ -163,7 +164,7 @@ struct AMapNavView: UIViewRepresentable {
 
             if route.count != routeCount {
                 routeCount = route.count
-                if let old = line { view.removeOverlay(old) }
+                if let old = line { view.remove(old) }
                 line = nil
                 if route.count >= 2 {
                     // 高德算路返回的就是 GCJ-02，但我们内部统一存 WGS-84，
@@ -172,12 +173,13 @@ struct AMapNavView: UIViewRepresentable {
                     var coords = pts
                     let l = MAPolyline(coordinates: &coords, count: UInt(pts.count))
                     line = l
-                    view.addOverlay(l)
+                    view.add(l)
                 }
             }
 
             let dkey = dest.map { "\($0.latitude),\($0.longitude)" } ?? ""
-            if dkey != lastKey + "|d" {
+            if dkey != lastDestKey {
+                lastDestKey = dkey
                 if let old = pin { view.removeAnnotation(old); pin = nil }
                 if let d = dest {
                     let a = MAPointAnnotation()
