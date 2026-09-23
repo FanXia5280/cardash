@@ -481,6 +481,23 @@ struct AMapNavView: UIViewRepresentable {
                 }
             }
 
+            // ── 车标：一直钉在车辆位置上（绿/灰实心圆 + 呼吸光晕，见 CarDotView）──
+            // 地图本身已经车头朝上（rotationDegree = heading），
+            // 所以圆点不用自己转朝向。
+            //
+            // ⚠️ 2026-09-24 这段曾被"删自绘路线"时**误删**：它正好夹在路线绘制块和
+            //    目的地 pin 之间，脚本按区间删就把车标一起删了 —— 现象是
+            //    **非导航态看不到车标**。教训见 §6 第 58 条：删块之后不光要看编译，
+            //    还要**逐个功能过一遍**（这次是用户在自己手机上发现的）。
+            if carPin == nil {
+                let a = MAPointAnnotation()
+                a.coordinate = c
+                carPin = a
+                view.addAnnotation(a)
+            } else {
+                carPin?.coordinate = c
+            }
+
             let dkey = dest.map { "\($0.latitude),\($0.longitude)" } ?? ""
             if dkey != lastDestKey {
                 lastDestKey = dkey
