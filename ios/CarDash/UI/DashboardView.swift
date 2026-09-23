@@ -59,6 +59,8 @@ struct DashboardView: View {
                             ],
                             startPoint: .top, endPoint: .bottom
                         )
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
                     } else {
                         LinearGradient(
                             stops: [
@@ -68,9 +70,9 @@ struct DashboardView: View {
                             ],
                             startPoint: .leading, endPoint: .trailing
                         )
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
                     }
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
 
                     Group {
                         if geo.size.height > geo.size.width {
