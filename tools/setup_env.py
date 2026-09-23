@@ -6,7 +6,8 @@ import time
 import urllib.request
 import zipfile
 
-ENV = r'd:\Desktop\IPA\_env'
+ENV = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))), '_env')
 DL = os.path.join(ENV, 'dl')
 
 FILES = [

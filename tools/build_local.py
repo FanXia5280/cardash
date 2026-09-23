@@ -114,7 +114,8 @@ def main():
     pk8 = os.path.join(keys, 'platform.pk8')
     pem = os.path.join(keys, 'platform.x509.pem')
     if not (os.path.isfile(pk8) and os.path.isfile(pem)):
-        for alt in (r'd:\Desktop\IPA\_tools', os.path.dirname(ENV)):
+        for alt in (os.path.join(os.path.dirname(ENV), '_tools'),
+                    os.path.dirname(ENV)):
             if os.path.isfile(os.path.join(alt, 'platform.pk8')):
                 keys = alt
                 pk8 = os.path.join(keys, 'platform.pk8')
