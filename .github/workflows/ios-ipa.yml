@@ -69,7 +69,21 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             MARKETING_VERSION="${{ steps.ver.outputs.marketing }}" \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
-            build
+            build 2>&1 | tee build.log
+
+      - name: Show build errors
+        if: failure()
+        working-directory: ios
+        run: |
+          echo "================================================================"
+          echo "编译错误（error: 行）"
+          echo "================================================================"
+          grep -n -E "error:|fatal error:|No such module" build.log | head -60 || true
+          echo ""
+          echo "================================================================"
+          echo "日志尾部 120 行"
+          echo "================================================================"
+          tail -120 build.log || true
 
       - name: Package unsigned IPA
         working-directory: ios

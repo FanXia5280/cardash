@@ -11,7 +11,13 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    # ⚠️ 必须关掉。
+    # ENABLE_USER_SCRIPT_SANDBOXING 是 Xcode 15+ 的脚本沙箱，它和 CocoaPods 已知冲突：
+    # CocoaPods 靠 [CP] Embed Pods Frameworks 这个脚本阶段往 App 里拷框架，
+    # 沙箱一开 rsync 就被拒（报 Sandbox: rsync deny file-write-create），
+    # 表现就是日志里刷一大串 CarDash.app/Frameworks/... 然后 (N failures)。
+    # 之前没有 pod 依赖所以一直没暴露。
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
     CLANG_ENABLE_MODULES: YES
 
 schemes:
