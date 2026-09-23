@@ -140,8 +140,9 @@ struct AMapNavView: UIViewRepresentable {
 
         let v = MAMapView(frame: .zero)
         v.delegate = context.coordinator
-        // 官方夜景样式 —— 不用再自己反相了
-        v.mapType = .standardNight
+        // 高德原版标准样式（白天）。之前用的 .standardNight 是暗黑底，
+        // 和仪表盘的玻璃质感不搭，用户明确要白天样式。
+        v.mapType = .standard
         // 实时路况（参考图里那些红黄绿的路段）
         v.isShowTraffic = true
         v.showsUserLocation = false

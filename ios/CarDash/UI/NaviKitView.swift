@@ -27,6 +27,13 @@ struct NaviKitNavView: UIViewRepresentable {
         let v = AMapNaviDriveView(frame: CGRect.zero)
         v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         v.delegate = context.coordinator
+
+        // 只要路线本身。高德导航视图默认会把整套控件都画上
+        // （转向面板、退出/设置按钮、右侧光柱条、全览按钮、比例尺），
+        // 和我们的仪表盘叠在一起非常乱。showUIElements=false 关掉这些
+        // 控件；路线、红绿灯、电子眼、车标是地图元素，不受影响，仍然显示。
+        v.showUIElements = false
+        v.showTrafficBar = false      // 右侧那条彩色光柱单独关掉
         context.coordinator.attach(view: v)
         context.coordinator.plan(from: from, to: to)
         return v
