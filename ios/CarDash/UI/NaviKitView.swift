@@ -71,7 +71,7 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate {
         let e = AMapNaviPoint.location(withLatitude: CGFloat(g2.latitude),
                                        longitude: CGFloat(g2.longitude))!
         m.calculateDriveRoute(withStart: [s], end: [e], wayPoints: nil,
-                              drivingStrategy: .DrivingStrategySingleDefault)
+                              drivingStrategy: .drivingStrategySingleDefault)
     }
 
     /// 算路成功 → 开始真实 GPS 导航（只启动一次）

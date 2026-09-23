@@ -50,6 +50,7 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGN_IDENTITY: ""
         SWIFT_OPTIMIZATION_LEVEL: "-O"
+        SWIFT_OBJC_BRIDGING_HEADER: CarDash/CarDash-Bridging-Header.h
         SWIFT_COMPILATION_MODE: wholemodule
         ENABLE_BITCODE: NO
         DEAD_CODE_STRIPPING: YES
