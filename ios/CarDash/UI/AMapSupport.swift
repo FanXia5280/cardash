@@ -100,6 +100,8 @@ struct AMapNavView: UIViewRepresentable {
     /// 视距（缩放级别）。高德官方 API：zoomLevel，范围 3~20。
     /// 越大越近。16≈200米、17≈100米、18≈50米、19≈25米。
     let zoom: Int
+    /// 本机 GPS 车速，用来自动调视距（高德导航那种「快了拉远、慢了拉近」）
+    let speed: Double?
 
     func makeUIView(context: Context) -> MAMapView {
         // ⚠️ 顺序不能变：apiKey → 隐私合规 → 才能 new MAMapView
@@ -133,7 +135,8 @@ struct AMapNavView: UIViewRepresentable {
                                    heading: heading,
                                    route: route,
                                    dest: dest,
-                                   zoom: zoom)
+                                   zoom: zoom,
+                                   speed: speed)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -146,18 +149,36 @@ struct AMapNavView: UIViewRepresentable {
         private var lastKey: String?
         private var lastDestKey: String?
         private var lastZoom: Int = -1
+        /// 车标箭头（高德那种蓝色导航箭头），一直钉在车辆位置上
+        private var carPin: MAPointAnnotation?
+
+        /// 自动比例：高德导航是「快了拉远、慢了拉近」，不是死一个倍率。
+        /// 在用户设的基准上加减一档，加起来才是最终视距。
+        static func autoZoomOffset(_ speedKmh: Double?) -> Int {
+            guard let s = speedKmh, s.isFinite else { return 0 }
+            switch s {
+            case ..<5:   return 2      // 停着/刚起步：拉近看清楚
+            case 5..<20: return 1
+            case 20..<45: return 0
+            case 45..<75: return -1
+            default:      return -2    // 上了快速路：拉远看远一点
+            }
+        }
 
         func update(view: MAMapView,
                     coord: CLLocationCoordinate2D?,
                     heading: Double,
                     route: [CLLocationCoordinate2D],
                     dest: CLLocationCoordinate2D?,
-                    zoom: Int) {
+                    zoom: Int,
+                    speed: Double?) {
 
-            // 视距只在用户真的改动时才动，别每帧重置，否则 +/− 没效果
-            if zoom != lastZoom {
-                lastZoom = zoom
-                view.setZoomLevel(Double(zoom), animated: true)
+            // 视距 = 用户基准 + 按车速自动加减档。
+            // 只有目标变了才动，别每帧重置，否则 +/− 没效果。
+            let target = max(12, min(19, zoom + AMapNavView.autoZoomOffset(speed)))
+            if target != lastZoom {
+                lastZoom = target
+                view.setZoomLevel(target, animated: true)
             }
 
             guard let raw = coord else { return }
@@ -189,6 +210,18 @@ struct AMapNavView: UIViewRepresentable {
                 }
             }
 
+            // ── 车标箭头：一直钉在车辆位置上 ──
+            // 地图本身已经车头朝上（rotationDegree = heading），
+            // 所以箭头固定朝屏幕上方就是「始终朝前」，不用自己转。
+            if carPin == nil {
+                let a = MAPointAnnotation()
+                a.coordinate = c
+                carPin = a
+                view.addAnnotation(a)
+            } else {
+                carPin?.coordinate = c
+            }
+
             let dkey = dest.map { "\($0.latitude),\($0.longitude)" } ?? ""
             if dkey != lastDestKey {
                 lastDestKey = dkey
@@ -213,6 +246,24 @@ struct AMapNavView: UIViewRepresentable {
 
         func mapView(_ mapView: MAMapView!, viewFor annotation: MAAnnotation!) -> MAAnnotationView! {
             guard !(annotation is MAUserLocation) else { return nil }
+
+            // 车标：高德那种蓝色导航箭头
+            if annotation === carPin {
+                let id = "car"
+                var v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
+                if v == nil {
+                    v = MAAnnotationView(annotation: annotation, reuseIdentifier: id)
+                }
+                v?.annotation = annotation
+                let cfg = UIImage.SymbolConfiguration(pointSize: 30, weight: .bold)
+                v?.image = UIImage(systemName: "location.north.fill",
+                                   withConfiguration: cfg)?
+                    .withTintColor(UIColor(red: 0.10, green: 0.52, blue: 1.0, alpha: 1.0),
+                                  renderingMode: .alwaysOriginal)
+                v?.centerOffset = .zero
+                return v
+            }
+
             let id = "dest"
             var v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
             if v == nil {
@@ -246,12 +297,13 @@ struct DashboardMapView: View {
     let amapAgreed: Bool
     let useRasterFallback: Bool
     let zoom: Int
+    let speed: Double?
 
     var body: some View {
         #if canImport(MAMapKit)
         if amapAgreed {
             AMapNavView(coord: coord, heading: heading, route: route, dest: dest,
-                        zoom: zoom)
+                        zoom: zoom, speed: speed)
         } else {
             NavMapView(coord: coord, heading: heading, route: route,
                        dest: dest, useAmapTiles: useRasterFallback)

@@ -35,7 +35,8 @@ struct DashboardView: View {
                                  dest: model.routeDest,
                                  amapAgreed: amapAgreed,
                                  useRasterFallback: useAmapTiles,
-                                 zoom: zoom)
+                                 zoom: zoom,
+                                 speed: model.displaySpeed)
                     // 地图**铺满整屏**。
                     // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
                     // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
