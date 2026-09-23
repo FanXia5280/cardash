@@ -212,9 +212,16 @@ enum AmapBundle {
 /// 车头会停在旧位置，用户看到的就是「切过来先错位、要等一会才归位」。
 final class AnchoredMapView: MAMapView {
     var onLayout: (() -> Void)?
+    private var lastSize: CGSize = .zero
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        onLayout?()
+        // ⚠️ 只在**尺寸真的变了**才回调：layoutSubviews 可能被 SDK 内部频繁触发，
+        // 每次重算相机（convert + centerCoordinate）会跟地图渲染抢时间 → 看着"卡卡"。
+        if bounds.size != lastSize {
+            lastSize = bounds.size
+            onLayout?()
+        }
     }
 }
 
@@ -295,6 +302,36 @@ struct AMapNavView: UIViewRepresentable {
         /// 最近一次的位置（GCJ-02）和车头朝向 —— 屏幕旋转时要拿它重算相机
         private var lastCoord: CLLocationCoordinate2D?
         private var lastHeading: Double = 0
+        /// 能不能取到当前位置（true = 在线）。车标颜色用它：绿=在线、灰=不在线
+        private var lastLocated = true
+        /// 上一次画车标用的在线状态。变了才换图 ——
+        /// `viewFor` 不会为已经存在的标注再调一次，所以状态变了要手动换。
+        private var carOnline: Bool?
+
+        /// 车辆位置圆点：苹果「查找」那种实心圆，绿=在线、灰=不在线（用户要求）。
+        /// 用 CoreGraphics 现画，不依赖任何图片资源（工程里目前一张图都没有）。
+        private static func carDot(online: Bool) -> UIImage {
+            let dot: CGFloat = 18
+            let halo: CGFloat = 34
+            let side = halo + 10
+            let size = CGSize(width: side, height: side)
+            let color: UIColor = online ? .systemGreen : .systemGray
+            return UIGraphicsImageRenderer(size: size).image { _ in
+                let c = CGPoint(x: side / 2, y: side / 2)
+                // 外圈光晕（同色半透明），让它在地图上更"发亮"
+                color.withAlphaComponent(0.28).setFill()
+                UIBezierPath(ovalIn: CGRect(x: c.x - halo / 2, y: c.y - halo / 2,
+                                            width: halo, height: halo)).fill()
+                // 白色描边环
+                UIColor.white.setFill()
+                UIBezierPath(ovalIn: CGRect(x: c.x - dot / 2 - 2.5, y: c.y - dot / 2 - 2.5,
+                                            width: dot + 5, height: dot + 5)).fill()
+                // 实心圆
+                color.setFill()
+                UIBezierPath(ovalIn: CGRect(x: c.x - dot / 2, y: c.y - dot / 2,
+                                            width: dot, height: dot)).fill()
+            }
+        }
 
         /// 把相机摆成「车落在 `MapAnchor` 指定位置」的样子。
         ///
@@ -354,6 +391,16 @@ struct AMapNavView: UIViewRepresentable {
                 // ⚠️ 高德这个 setZoomLevel(_:animated:) 参数是 CGFloat，
                 // 但 zoomLevel 属性又是 double，两个类型不一致，得显式转
                 view.setZoomLevel(CGFloat(target), animated: true)
+            }
+
+            // ── 车标在线/离线（绿 / 灰）──
+            // 取不到当前位置就画灰点，一眼能看出"GPS 没数据"，别让人以为车在这儿。
+            lastLocated = (coord != nil)
+            if carOnline != lastLocated {
+                carOnline = lastLocated
+                if let a = carPin, let v = view.view(for: a) {
+                    v.image = Self.carDot(online: lastLocated)
+                }
             }
 
             guard let raw = coord else { return }
@@ -468,7 +515,9 @@ struct AMapNavView: UIViewRepresentable {
         func mapView(_ mapView: MAMapView!, viewFor annotation: MAAnnotation!) -> MAAnnotationView! {
             guard !(annotation is MAUserLocation) else { return nil }
 
-            // 车标：优先用**高德官方那张**（和导航态同一个图标），取不到才自绘
+            // 车标：用户 2026-09-24 要求照苹果「查找」那种**实心圆** ——
+            // 绿 = 在线（能取到当前位置）、灰 = 不在线（取不到）。
+            // 之前那个高德三角箭头太小，导航态又已经有原版 3D 车标，非导航态就用圆点。
             if annotation === carPin {
                 let id = "car"
                 var v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
@@ -476,15 +525,7 @@ struct AMapNavView: UIViewRepresentable {
                     v = MAAnnotationView(annotation: annotation, reuseIdentifier: id)
                 }
                 v?.annotation = annotation
-                if let official = AmapBundle.carIcon {
-                    v?.image = official
-                } else {
-                    let cfg = UIImage.SymbolConfiguration(pointSize: 30, weight: .bold)
-                    v?.image = UIImage(systemName: "location.north.fill",
-                                       withConfiguration: cfg)?
-                        .withTintColor(UIColor(red: 0.10, green: 0.52, blue: 1.0, alpha: 1.0),
-                                      renderingMode: .alwaysOriginal)
-                }
+                v?.image = Self.carDot(online: carOnline ?? true)
                 v?.centerOffset = .zero
                 return v
             }

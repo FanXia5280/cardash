@@ -12,9 +12,16 @@ import AMapNaviKit
 /// 用户实测就是这个现象。在 `layoutSubviews` 里补一次，同一帧内就摆正了。
 final class AnchoredDriveView: AMapNaviDriveView {
     var onLayout: (() -> Void)?
+    private var lastSize: CGSize = .zero
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        onLayout?()
+        // ⚠️ 只在**尺寸真的变了**才回调。layoutSubviews 可能被 SDK 内部频繁触发，
+        // 每次都重设 screenAnchor 会跟导航引擎抢相机 → 表现出来就是"地图卡卡的"。
+        if bounds.size != lastSize {
+            lastSize = bounds.size
+            onLayout?()
+        }
     }
 }
 
@@ -65,13 +72,15 @@ struct NaviKitNavView: UIViewRepresentable {
         // 2) 电子眼：showCamera 默认 YES，但**距离**默认 NO
         v.showCamera = true
         v.showCameraDistance = true
-        // 3) 红绿灯：图标默认 YES；倒计时（showTrafficLightView）头文件写明是
-        //    **收费接口**（"开启付费权限时默认为YES"）—— 有权限就白赚，没权限它不画
+        // 3) 红绿灯**图标**（默认 YES、免费）
         v.showTrafficLights = true
-        v.showTrafficLightView = true
-        // 4) 超速脉冲：头文件「默认为 NO。特别注意：当前接口为收费接口」
-        //    收费的先开着；同时 iPhone 那边用限速自己算了一份红色边缘光，不依赖它
-        v.showOverSpeedPulse = true
+        // ⛔ 红绿灯**倒计时**（showTrafficLightView）与超速脉冲（showOverSpeedPulse）
+        //    都是**收费接口**：用户 2026-09-24 明确要求"只用官方 SDK 的免费功能" ⇒ 不开。
+        //    要开得提高德商务合作工单（价格不公开，见交接文档待办 9）。
+        //    ⚠️ 别顺手打开"试试" —— 没付费权限时它们**什么都不画**，白开。
+        //
+        // 超速那条我们自己有一份免费的（车机高德广播的限速 + 实时车速 → EdgeGlow 红光），
+        // 数据同样来自原厂，不依赖这个收费接口。
 
         // ── 日夜模式：按日出日落自动切换 ──
         // AMapNaviDriveView.mapViewModeType，枚举定义在 AMapNaviCommonObj.h：
@@ -149,7 +158,10 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
     /// ⚠️ isAMapCoordinate 传 NO = 我们喂的是 WGS-84（内部坐标统一 WGS-84）。
     /// ⚠️ **模拟导航时绝不能喂** —— 那会把模拟车拽回真实位置，模拟就跑不动了。
     func feed(from: CLLocationCoordinate2D?) {
-        guard !simulate else { return }
+        // 模拟导航**开始之后**不能再喂真实定位（会把模拟车拽回真实位置）；
+        // 但**开始之前**必须喂 —— 否则地图先停在高德的默认位置（北京），
+        // 用户实测「模拟导航先显示北京，然后才从定位开始」就是这一条。
+        if simulate && startedMode != nil { return }
         guard let m = manager, let f = from else { return }
         if let l = lastFed,
            abs(l.latitude - f.latitude) < 1e-6, abs(l.longitude - f.longitude) < 1e-6 {
@@ -179,19 +191,11 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
             return
         }
         guard let f = from else { return }
-        feed(from: f)
 
-        // ── 只有**目的地变了**（或模拟开关变了）才重新算路 ──
-        // ⚠️ 千万别把起点也算进 key：车一动就重算路线，白费流量，还会把导航重置
-        //（1.6.12 之前就是这么写的，等于每开 5 米重算一次）。
-        if let p = plannedDest,
-           abs(p.0 - t.latitude) < 5e-5, abs(p.1 - t.longitude) < 5e-5,
-           plannedSimulate == simulate {
-            return
-        }
-        plannedDest = (t.latitude, t.longitude)
-        plannedSimulate = simulate
-
+        // ⚠️ 顺序很关键：**先建引擎 → 再喂位置 → 最后才谈算路**。
+        // 以前是先 feed 后建引擎 —— 第一次调用时 manager 还是 nil，feed 等于没做，
+        // 于是地图先显示高德的默认位置（**北京**），要等下一次更新才跳过来。
+        // 用户实测「模拟导航先显示北京，然后才从定位开始导航」就是这个。
         let m = manager ?? AMapNaviDriveManager.sharedInstance()
         if manager == nil {
             m.delegate = self
@@ -204,6 +208,18 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
             m.pauseNaviSpeech()
             manager = m
         }
+        feed(from: f)
+
+        // ── 只有**目的地变了**（或模拟开关变了）才重新算路 ──
+        // ⚠️ 千万别把起点也算进 key：车一动就重算路线，白费流量，还会把导航重置
+        //（1.6.12 之前就是这么写的，等于每开 5 米重算一次）。
+        if let p = plannedDest,
+           abs(p.0 - t.latitude) < 5e-5, abs(p.1 - t.longitude) < 5e-5,
+           plannedSimulate == simulate {
+            return
+        }
+        plannedDest = (t.latitude, t.longitude)
+        plannedSimulate = simulate
 
         // 导航 SDK 的坐标是 GCJ-02，我们内部统一存 WGS-84，转一道
         let g1 = ChinaCoord.toGcj(f)

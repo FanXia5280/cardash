@@ -369,7 +369,8 @@ struct NavSummaryPanel: View {
                 Text(arr)
                     .font(.system(size: scale * 15, weight: .medium, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.70))
+                    // 用户 2026-09-24：别用灰的，和旁边两格一个亮度
+                    .foregroundStyle(.white.opacity(0.9))
             }
         }
         .opacity(active ? 1 : 0)

@@ -221,10 +221,15 @@ final class DashboardModel: ObservableObject {
 
                 if let data,
                    let snap = try? JSONDecoder().decode(CarSnapshot.self, from: data) {
-                    self.car = snap
+                    // ⚠️ 只在**真的变了**才赋值。
+                    // `@Published` 是"只要赋值就发通知"，而这个 poll 每 250ms 跑一次 ——
+                    // 无条件赋值等于让整个 HUD（连同地图那个 UIViewRepresentable）
+                    // 每秒重绘 4 次，地图会被一起拖累（用户反馈"地图卡卡的、没有 60 帧"）。
+                    // CarSnapshot 是 Equatable，比一下几乎不花时间。
+                    if snap != self.car { self.car = snap }
                     self.lastSuccess = Date()
-                    self.link = .online
-                    self.carHost = self.host
+                    if self.link != .online { self.link = .online }
+                    if self.carHost != self.host { self.carHost = self.host }
                     // 车机一报新目的地就重算路线（内部按目的地去重）
                     self.replanRoute()
                     return
