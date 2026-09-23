@@ -248,7 +248,7 @@ struct AMapNavView: UIViewRepresentable {
                         guard g.count >= 2 else { continue }
                         var c = g
                         let l = MAPolyline(coordinates: &c, count: UInt(g.count))
-                        segLines.append(l)
+                        segLines.append(l!)
                         segStatus.append(seg.status)
                         view.add(l)
                     }
