@@ -47,27 +47,92 @@ struct NaviKitNavView: UIViewRepresentable {
         if let auto = AMapNaviViewMapModeType(rawValue: 2) {
             v.mapViewModeType = auto
         }
+
         context.coordinator.attach(view: v)
         context.coordinator.plan(from: from, to: to)
         return v
     }
 
     func updateUIView(_ v: AMapNaviDriveView, context: Context) {
+        // 自车图标位置随屏幕方向走（横屏靠右 / 竖屏靠下）
+        context.coordinator.applyAnchor(view: v)
+        // 把当前位置持续喂给引擎，别让它自己慢慢搜星
+        context.coordinator.feed(from: from)
         context.coordinator.plan(from: from, to: to)
     }
 
     func makeCoordinator() -> NaviCoordinator { NaviCoordinator() }
+
+    /// 提前把导航引擎点着。
+    ///
+    /// 高德的单例（AMapNaviDriveManager）第一次创建要初始化整套引擎，
+    /// 是**同步阻塞**的 —— 用户实测「点模拟导航会卡一下」就是这个。
+    /// 放到 App 启动时空跑一次，点导航时就不卡了。
+    static func prewarm() {
+        DispatchQueue.main.async {
+            AMapServices.shared().apiKey = AMapConfig.iOSKey
+            AMapServices.shared().enableHTTPS = true
+            let m = AMapNaviDriveManager.sharedInstance()
+            m.isUseInternalTTS = false
+            m.pauseNaviSpeech()
+        }
+    }
 }
 
 final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
                             AMapNaviDriveViewDelegate {
+
+    /// 自车图标在屏幕上的位置（0~1，(0,0) 左上、(1,1) 右下）。
+    ///
+    ///   - **横屏**：往右挪一点。左边是大号车速数字（参考图也是这样，
+    ///     车顶在屏幕中线右边，左半屏留给 HUD）。
+    ///   - **竖屏**：往下挪一点。竖屏时车速数字就在车头正上方，
+    ///     居中的话会压住车头前面那段路线（用户实测反馈）。
+    ///
+    /// ⚠️ screenAnchor 只在 showUIElements = NO 时生效（头文件原话），
+    /// 我们正好是 NO。要调位置就改这两个常量。
+    static let anchorLandscape = CGPoint(x: 0.58, y: 0.50)
+    static let anchorPortrait  = CGPoint(x: 0.50, y: 0.60)
+
     private weak var view: AMapNaviDriveView?
     private var manager: AMapNaviDriveManager?
     /// 上一次算路的 (起点纬,起经,终纬,终经)，目的地/位置没大变就不重算
     private var planned: (Double, Double, Double, Double)?
     private var naviStarted = false
+    /// 上一次喂给引擎的位置（没动就不重复喂）
+    private var lastFed: CLLocationCoordinate2D?
 
     func attach(view v: AMapNaviDriveView) { view = v }
+
+    /// 自车图标位置：按当前屏幕方向设置
+    func applyAnchor(view v: AMapNaviDriveView) {
+        guard v.bounds.width > 1, v.bounds.height > 1 else { return }
+        let portrait = v.bounds.height > v.bounds.width
+        let want = portrait ? Self.anchorPortrait : Self.anchorLandscape
+        if abs(v.screenAnchor.x - want.x) > 0.001 || abs(v.screenAnchor.y - want.y) > 0.001 {
+            v.screenAnchor = want
+        }
+    }
+
+    /// 把本机的「当前位置」喂给导航引擎。
+    ///
+    /// 为什么要这个：导航引擎默认用**它自己的**定位，还在搜星的这段时间
+    /// 地图停在默认位置 —— 而高德的默认位置是**北京**。
+    /// 用户实测：「点模拟导航会卡一下，然后地图先显示一下北京，
+    /// 才从我的位置开始导航」，就是这个。
+    /// `setExternalLocation` 直接告诉引擎「你在这儿」，地图立刻就在车上。
+    ///
+    /// ⚠️ isAMapCoordinate 传 NO = 我们喂的是 WGS-84（内部坐标统一 WGS-84）。
+    func feed(from: CLLocationCoordinate2D?) {
+        guard let m = manager, let f = from else { return }
+        if let l = lastFed,
+           abs(l.latitude - f.latitude) < 1e-6, abs(l.longitude - f.longitude) < 1e-6 {
+            return                      // 没动过就别打扰引擎
+        }
+        lastFed = f
+        m.setExternalLocation(CLLocation(latitude: f.latitude, longitude: f.longitude),
+                              isAMapCoordinate: false)
+    }
 
     func plan(from: CLLocationCoordinate2D?, to: CLLocationCoordinate2D?) {
         guard let f = from, let t = to else { return }
@@ -83,8 +148,15 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
         if manager == nil {
             m.delegate = self
             if let v = view { m.addDataRepresentative(v) }
+            // ── 仪表盘自己不出声 ──
+            // 用户明确要求：不要导航语音播报（车机自己会报）。
+            // isUseInternalTTS 头文件默认就是 NO，这里显式声明一次防止版本差异；
+            // pauseNaviSpeech 把内置播报暂停（文档：不影响导航状态）。
+            m.isUseInternalTTS = false
+            m.pauseNaviSpeech()
             manager = m
         }
+        feed(from: f)
 
         // 导航 SDK 的坐标是 GCJ-02，我们内部统一存 WGS-84，转一道
         let g1 = ChinaCoord.toGcj(f)

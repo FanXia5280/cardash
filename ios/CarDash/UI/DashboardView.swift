@@ -37,20 +37,37 @@ struct DashboardView: View {
                 NaviKitNavView(from: model.coord, to: dest)
                     .ignoresSafeArea()
             } else {
-                DashboardMapView(coord: model.coord,
-                                 heading: model.heading,
-                                 route: model.route,
-                                 dest: model.routeDest,
-                                 amapAgreed: amapAgreed,
-                                 useRasterFallback: useAmapTiles,
-                                 zoom: zoom,
-                                 speed: model.displaySpeed,
-                                 segments: model.routeSegments)
-                    // 地图**铺满整屏**。
-                    // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
-                    // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
-                    // 它是整块地图通亮，只在上下压两条渐变带给 HUD 垫底。
-                    .ignoresSafeArea()
+                // 普通地图：**画得比屏幕大，再整体挪一点**。
+                //
+                // 地图里的「车头 / 当前位置」永远在视图正中，所以把视图画大 1.35 倍
+                // 再往右（横屏）/ 往下（竖屏）推，车头就落在屏幕的非中心位置了 ——
+                // 和导航视图的 screenAnchor 保持一致（横屏 0.58 / 竖屏 y 0.60）。
+                //
+                // 为什么不直接改经纬度：相机有俯角、车头还会旋转，屏幕位移换算成
+                // 经纬度随朝向/缩放变化，算不准；把视图画大再挪，跟数学无关，稳。
+                // ⚠️ 位移量不能超过 (1.35-1)/2 = 0.175 个屏幕，否则边缘露白。
+                GeometryReader { g in
+                    let anchor: CGPoint = g.size.height > g.size.width
+                        ? CGPoint(x: 0.50, y: 0.60)      // 竖屏：往下一点（别被车速压住）
+                        : CGPoint(x: 0.58, y: 0.50)      // 横屏：往右一点（左边留给大号车速）
+                    DashboardMapView(coord: model.coord,
+                                     heading: model.heading,
+                                     route: model.route,
+                                     dest: model.routeDest,
+                                     amapAgreed: amapAgreed,
+                                     useRasterFallback: useAmapTiles,
+                                     zoom: zoom,
+                                     speed: model.displaySpeed,
+                                     segments: model.routeSegments)
+                        .frame(width: g.size.width * 1.35, height: g.size.height * 1.35)
+                        .offset(x: (anchor.x - 0.5) * g.size.width,
+                                y: (anchor.y - 0.5) * g.size.height)
+                }
+                // 地图**铺满整屏**。
+                // 上一版在这里套了个径向遮罩当「渐变地图」，结果四角全黑、
+                // 只剩中间一个聚光斑，又脏又挡地图 —— 参考图不是这样，
+                // 它是整块地图通亮，只在上下压两条渐变带给 HUD 垫底。
+                .ignoresSafeArea()
             }
 
             GeometryReader { geo in
@@ -64,34 +81,47 @@ struct DashboardView: View {
                     //   竖屏 → 压上边（速度在上方），到中段就淡出，
                     //          下面整块留给地图和路线
                     // 多加几段 stop，让渐变是「慢慢淡下去」而不是「很快就没」，
-                    // 参考图那种自然的压暗就是这个差别
-                    if geo.size.height > geo.size.width {
+                    // 参考图那种自然的压暗就是这个差别。
+                    //
+                    // ⚠️ 2026-09-23：用户对比参考图后反馈「不够黑，靠近灵动岛那一带
+                    // 要更黑一点」→ 主渐变加了浓度，并**额外压一条顶部带**（下面那层）。
+                    ZStack {
+                        if geo.size.height > geo.size.width {
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .black.opacity(0.86), location: 0.00),
+                                    .init(color: .black.opacity(0.68), location: 0.20),
+                                    .init(color: .black.opacity(0.42), location: 0.44),
+                                    .init(color: .black.opacity(0.16), location: 0.58),
+                                    .init(color: .black.opacity(0.00), location: 0.74),
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        } else {
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .black.opacity(0.88), location: 0.00),
+                                    .init(color: .black.opacity(0.70), location: 0.20),
+                                    .init(color: .black.opacity(0.44), location: 0.42),
+                                    .init(color: .black.opacity(0.18), location: 0.60),
+                                    .init(color: .black.opacity(0.00), location: 0.76),
+                                ],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        }
+
+                        // 顶部那条：灵动岛/刘海就在这一带，压得更黑（横竖屏都要）
                         LinearGradient(
                             stops: [
-                                .init(color: .black.opacity(0.72), location: 0.00),
-                                .init(color: .black.opacity(0.56), location: 0.22),
-                                .init(color: .black.opacity(0.34), location: 0.45),
-                                .init(color: .black.opacity(0.14), location: 0.60),
-                                .init(color: .black.opacity(0.00), location: 0.76),
+                                .init(color: .black.opacity(0.52), location: 0.00),
+                                .init(color: .black.opacity(0.26), location: 0.11),
+                                .init(color: .black.opacity(0.00), location: 0.26),
                             ],
                             startPoint: .top, endPoint: .bottom
                         )
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
-                    } else {
-                        LinearGradient(
-                            stops: [
-                                .init(color: .black.opacity(0.72), location: 0.00),
-                                .init(color: .black.opacity(0.56), location: 0.24),
-                                .init(color: .black.opacity(0.32), location: 0.48),
-                                .init(color: .black.opacity(0.13), location: 0.64),
-                                .init(color: .black.opacity(0.00), location: 0.80),
-                            ],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
                     }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
 
                     Group {
                         if geo.size.height > geo.size.width {
@@ -140,6 +170,11 @@ struct DashboardView: View {
             // 第一次启动问一次。同意才启用高德矢量地图。
             if !amapAsked { showPrivacy = true }
             lastAutoOffset = MapZoom.autoOffset(model.displaySpeed)
+            // 提前把高德导航引擎点着。它第一次创建是**同步阻塞**的，
+            // 不然点「模拟导航」/ 车机一来目的地就会卡一下（用户实测反馈）。
+            #if canImport(AMapNaviKit)
+            if amapAgreed { NaviKitNavView.prewarm() }
+            #endif
         }
         .onChange(of: MapZoom.autoOffset(model.displaySpeed)) { newOff in
             // 车速换了档（比如从怠速提到快速路），把差值写进 zoom。

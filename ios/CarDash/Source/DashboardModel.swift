@@ -33,6 +33,10 @@ final class DashboardModel: ObservableObject {
     private var routedKey: String?
     /// 测试用：手动塞的假目的地。正式版可以连这块一起删掉。
     @Published private(set) var mockDest: Dest?
+    /// 模拟路线时顺带塞的假导航信息。
+    /// 连车机时「还有多久 / 多远 / 几点到」由车机的高德广播给；
+    /// 没连车机时这三格是空的，用户就看不出来排版对不对 —— 所以模拟时自己填一份。
+    @Published private(set) var mockNav: NavState?
 
     // MARK: - 设置
     @Published var host: String {
@@ -387,7 +391,8 @@ final class DashboardModel: ObservableObject {
     }
 
     var displayNav: NavState? {
-        carFresh ? car?.nav : nil
+        if let m = mockNav { return m }        // 模拟路线优先（给用户试排版用）
+        return carFresh ? car?.nav : nil
     }
 
     // MARK: - 自动同步路线
@@ -606,12 +611,24 @@ final class DashboardModel: ObservableObject {
         mockDest = Dest(name: "测试目的地",
                         lat: g.latitude + dLat,
                         lon: g.longitude + dLon)
+        // 连车机时这些字段由车机的高德广播给；测试排版时得自己填，
+        // 否则顶栏中间那块（还有多久 / 多远 / 几点到）是空的，没法看位置对不对。
+        mockNav = NavState(active: true,
+                           title: nil,
+                           subtitle: nil,
+                           distance: nil,
+                           after: nil,
+                           eta: "42 分钟",
+                           remain: "21.9 公里",
+                           turn: "straight",
+                           arrive: "预计 19:30 到达")
         routedKey = nil
         replanRoute()
     }
 
     func clearMockDestination() {
         mockDest = nil
+        mockNav = nil
         routedKey = nil
         replanRoute()
     }
