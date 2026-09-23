@@ -24,7 +24,9 @@ struct NaviKitNavView: UIViewRepresentable {
 
         // 不配置任何属性 —— AMapNaviDriveView 的默认样式就是官方导航
         // （原版路线纹理、红绿灯、电子眼、3D 车模、自动车头朝上）
-        let v = AMapNaviDriveView(frame: CGRect.zero, delegate: context.coordinator)
+        let v = AMapNaviDriveView(frame: CGRect.zero)
+        v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        v.delegate = context.coordinator
         context.coordinator.attach(view: v)
         context.coordinator.plan(from: from, to: to)
         return v
@@ -76,7 +78,8 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
     }
 
     /// 算路成功 → 开始真实 GPS 导航（只启动一次）
-    func driveManager(onCalculateRouteSuccess driveManager: AMapNaviDriveManager) {
+    func driveManager(_ driveManager: AMapNaviDriveManager,
+                      onCalculateRouteSuccessWith type: AMapNaviRoutePlanType) {
         guard !naviStarted else { return }
         naviStarted = true
         driveManager.startGPSNavi()
