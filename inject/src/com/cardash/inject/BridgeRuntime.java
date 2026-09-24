@@ -279,6 +279,14 @@ public final class BridgeRuntime {
         sb.append("  续航   ").append(fmt(hub.rangeKm, " km")).append('\n');
         sb.append("  总里程 ").append(fmt(hub.odometerKm, " km")).append('\n');
         sb.append("  导航   ").append(hub.navTitle == null ? "--" : hub.navTitle).append('\n');
+        // 目的地一行（/diag 也看得到，不用非去翻 /logcat）
+        sb.append("  目的地 ").append(DestSignals.destName() == null ? "--" : DestSignals.destName())
+          .append("  ")
+          .append(DestSignals.lat() == null || DestSignals.lon() == null
+                  ? "（无坐标）" : (DestSignals.lat() + "," + DestSignals.lon()))
+          .append("  [").append(DestSignals.source() == null ? "-" : DestSignals.source()).append("]")
+          .append(DestSignals.usable() ? "  可下发" : "  不下发")
+          .append('\n');
 
         sb.append("\n信号来源:\n");
         synchronized (hub.src) {
@@ -409,6 +417,13 @@ public final class BridgeRuntime {
         sb.append(AmapSignals.rawSummary());
         sb.append('\n').append(AmapSignals.extrasAll());
         sb.append('\n').append(AmapSignals.iconCalibration());
+
+        // 目的地（双来源）。
+        // ⚠️ 2026-09-24 自查发现：DestSignals.report() **写了却没人调用** ——
+        //    也就是说"上车看目的地那一段"其实一直是空的（文档里却让人去看它）。
+        //    这次接上：老车机包 / /logcat 里看不到这一段，就是这里漏了。
+        sb.append("\n【目的地（高德广播 = 权威 / 语音 = 兜底）】\n");
+        sb.append(DestSignals.report());
 
         // 车机原生导航 IPC —— 不靠语音拿目的地的那条路，这里也触发一次采样
         S05Navi.probeDestination("logcat");

@@ -104,15 +104,19 @@ struct SettingsSheet: View {
                         }
                     } else {
                         Button("logcat 取数诊断") { load("/logcat", "logcat 取数诊断") }
-                        Button("厂商属性扫描") { load("/scan", "厂商属性扫描") }
+                        Button("状态快照（JSON）") { load("/state", "状态快照（JSON）") }
                         Button("车机运行状态") { load("/diag", "车机运行状态") }
+                        Button("厂商属性扫描") { load("/scan", "厂商属性扫描") }
                         Button("桥接运行日志") { load("/log", "桥接运行日志") }
                     }
                 } header: {
                     Text("车机诊断")
                 } footer: {
                     Text("车机上没有浏览器也没关系，这里直接读。"
-                         + "打开后点右上角「复制」就能整段发出来。")
+                         + "打开后点右上角「复制」就能整段发出来。\n"
+                         + "排查导航/目的地问题时，把「logcat 取数诊断」和"
+                         + "「状态快照（JSON）」两份一起发 —— 前者有高德广播的全部 key，"
+                         + "后者有当前的目的地和导航来源。")
                 }
 
                 Section("本机传感器") {
