@@ -338,23 +338,26 @@ public final class DestSignals {
         }
     }
 
-    /** 把一个 extra 归类到 名字/纬度/经度，或者继续往下钻（值是嵌套对象时）。 */
+    /**
+     * 把一个**直接 extra** 归类到 名字/纬度/经度。
+     *
+     * ⚠️ 这里**只认确切的字段名**，不做任何"往下钻"：
+     * 一钻就会把 `EXTRA_POI_RESULT` 那类**搜索结果**也翻一遍 ——
+     * 用户只是搜了个地方、没去导航，IPA 却把目的地改过去了，
+     * 正是用户要求避免的「导航到其他目的地」。
+     * 载荷类的（JSON / 嵌套 Bundle）只从 {@link #ROUTE_PAYLOAD_KEYS} 那几个 key 进
+     *（见 {@link #onAmapBroadcast} 的第 2 步）。
+     */
     private static void classify(String key, Object value, Hit hit) {
         String n = normKey(key);
         if (n.isEmpty()) return;
         if (NAME_KEYS.contains(n)) {
             hit.name = firstNonEmpty(hit.name, asString(value));
-            return;
-        }
-        if (LAT_KEYS.contains(n)) {
+        } else if (LAT_KEYS.contains(n)) {
             hit.lat = firstNonNull(hit.lat, asDouble(value));
-            return;
-        }
-        if (LON_KEYS.contains(n)) {
+        } else if (LON_KEYS.contains(n)) {
             hit.lon = firstNonNull(hit.lon, asDouble(value));
-            return;
         }
-        walk(value, hit, 0);
     }
 
     /**
@@ -397,6 +400,27 @@ public final class DestSignals {
                     continue;
                 }
                 walk(v, hit, depth + 1);
+            }
+        } else if (node instanceof Bundle) {
+            // 有些版本把路线信息放成嵌套 Bundle 而不是 JSON 字符串
+            Bundle b = (Bundle) node;
+            for (String k : b.keySet()) {
+                Object v;
+                try {
+                    v = b.get(k);
+                } catch (Throwable t) {
+                    continue;
+                }
+                String n = normKey(k);
+                if (NAME_KEYS.contains(n)) {
+                    hit.name = firstNonEmpty(hit.name, asString(v));
+                } else if (LAT_KEYS.contains(n)) {
+                    hit.lat = firstNonNull(hit.lat, asDouble(v));
+                } else if (LON_KEYS.contains(n)) {
+                    hit.lon = firstNonNull(hit.lon, asDouble(v));
+                } else {
+                    walk(v, hit, depth + 1);
+                }
             }
         } else if (node instanceof String) {
             String s = (String) node;
