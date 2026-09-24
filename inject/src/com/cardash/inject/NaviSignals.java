@@ -124,8 +124,9 @@ public final class NaviSignals {
             "([\\u4e00-\\u9fa5A-Za-z0-9]{2,18}"
                     + "(?:路|街|大道|高速公路|高速|公路|大桥|隧道|立交桥|立交|环岛|出口|匝道|辅路|主路|路口))");
 
-    /** 通知来源的数据在这个时间窗内优先，避免被读屏的低精度结果覆盖 */
-    private static final long NOTIFY_PRIORITY_MS = 5000L;
+    // 来源优先级/让位窗口统一在 StateHub.navClaim 里（2026-09-24 起），
+    // 这里不再各管一段 —— 以前只有"通知栏压读屏"这一条规则，
+    // 原厂导航 + 第三方高德同时开时压不住。
 
     private NaviSignals() { }
 
@@ -241,6 +242,12 @@ public final class NaviSignals {
         if (head == null && sub == null) return;
 
         StateHub hub = StateHub.get();
+
+        // 来源仲裁：高德广播正在推（每秒一条）时，通知栏这条会被压住 ——
+        // 用户习惯原厂导航和第三方高德同时开，不仲裁的话顶栏数字会在两个 App
+        // 之间来回跳（2026-09-24）。高德没在导航时这条 5 秒后自然接手。
+        if (!hub.navClaim("notify:" + pkg)) return;
+
         hub.navTitle = head != null ? head : sub;
         hub.navSub = (sub != null && !sub.equals(hub.navTitle)) ? sub : null;
 
@@ -254,7 +261,7 @@ public final class NaviSignals {
 
         hub.navActive = true;
         hub.navUpdatedAt = System.currentTimeMillis();
-        hub.navSource = "notify:" + pkg;
+        // navSource 已经由上面的 navClaim 记成 "notify:<包名>"，这里不用再赋一次
     }
 
     // ─────────────────────────────────────── 无障碍包名统计
@@ -335,12 +342,6 @@ public final class NaviSignals {
 
         StateHub hub = StateHub.get();
 
-        // 通知栏刚给过更准的结果就别覆盖
-        if (hub.navSource != null && hub.navSource.startsWith("notify")
-                && System.currentTimeMillis() - hub.navUpdatedAt < NOTIFY_PRIORITY_MS) {
-            return;
-        }
-
         String turn = null;
         String road = null;
         String distance = null;
@@ -379,6 +380,11 @@ public final class NaviSignals {
             sub = distance;
         }
 
+        // 来源仲裁（读屏是精度最低的一路，优先级也最低）：
+        // 高德广播在推就让它、通知栏刚给过也让它 —— 别把顶栏数字搅乱。
+        // 统一走 StateHub.navClaim，不再各自定规则（以前这里只压"通知栏"一路）。
+        if (!hub.navClaim("a11y:" + pkg)) return;
+
         hub.navTitle = title;
         hub.navSub = sub;
         hub.navDistance = distance;
@@ -398,7 +404,7 @@ public final class NaviSignals {
 
         hub.navActive = true;
         hub.navUpdatedAt = System.currentTimeMillis();
-        hub.navSource = "a11y:" + pkg;
+        // navSource 已经由上面的 navClaim 记成 "a11y:<包名>"，这里不用再赋一次
     }
 
     // ─────────────────────────────────────── 工具

@@ -143,6 +143,58 @@ public final class StateHub {
      * 真的结束了由那边清 navActive，或者由会话看门狗兜底。
      * 用户明确要求：**中间不中断导航**，宁可多显示一会儿旧数据。
      */
+    // ── 导航字段的来源仲裁 ──
+
+    /**
+     * 导航数据来源的优先级。
+     *
+     * ⚠️ 2026-09-24 新增。用户的习惯是**车机原厂导航和第三方高德同时开着**，
+     * 而「剩余多久 / 还有多远 / 转向」是同一批槽位 —— 多路来源会互相覆盖，
+     * 表现就是顶栏数字在两个 App 之间来回跳。所以按来源仲裁：
+     *
+     * <pre>
+     *   高德广播 (3)  >  通知栏 / 读屏 (2)  >  车身信号 (1)
+     * </pre>
+     *
+     * 高德优先是故意的：它是**唯一**能给目的地的那一路（手动导航也靠它），
+     * 而且导航中每秒都在推，最实时。
+     */
+    private static int navPrio(String src) {
+        if (src == null) return 0;
+        if (src.startsWith("amap")) return 3;
+        if (src.startsWith("notify") || src.startsWith("a11y")) return 2;
+        if (src.startsWith("vendor")) return 1;
+        return 0;
+    }
+
+    /** 当前来源超过这么久没推数据，就算"让位了"，别的来源可以接手 */
+    private static final long NAV_TAKEOVER_MS = 5000L;
+
+    /**
+     * 这一路来源现在能不能写导航字段（能写就顺手把自己记成当前来源）。
+     *
+     * <p>规则：优先级不低于当前来源，**或者**当前来源已经 {@value #NAV_TAKEOVER_MS}
+     * 毫秒没动静了。
+     *
+     * <p>效果：高德导航时每秒都在推 ⇒ 通知栏/读屏那几路一直被压着，
+     * 两个导航 App 同时开也不会来回跳；反过来高德没在导航时，
+     * 通知栏那条 5 秒后就能接手（原厂导航单独用时顶栏照样有数据）。
+     *
+     * @return true = 可以写；false = 被更高优先级的来源压住了（会记进诊断）
+     */
+    public synchronized boolean navClaim(String src) {
+        long now = System.currentTimeMillis();
+        boolean free = navSource == null || now - navUpdatedAt > NAV_TAKEOVER_MS;
+        if (free || navPrio(src) >= navPrio(navSource)) {
+            navSource = src;
+            return true;
+        }
+        // 被压住了：记进诊断 —— 这样在 /state 的 src 里一眼就能看出
+        // "两个导航确实都在推、我们挑了哪一个"，不用靠猜。
+        setSource("navIgnored", src + "（当前 " + navSource + " 优先级更高）");
+        return false;
+    }
+
     private boolean navFresh() {
         return navActive && (System.currentTimeMillis() - navUpdatedAt) < 60000L;
     }

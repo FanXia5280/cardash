@@ -229,7 +229,9 @@ public final class AmapSignals {
 
         hub.navActive = true;
         hub.navUpdatedAt = lastGuideAt;
-        hub.navSource = "amap";
+        // 来源仲裁：高德优先级最高，永远抢得到（原厂导航/通知栏那几路会被它压住，
+        // 免得两个导航 App 同时开时顶栏数字来回跳，见 StateHub.navClaim）。
+        hub.navClaim("amap");
         hub.setSource("amap", "guide");
     }
 

@@ -147,7 +147,14 @@ public final class DestSignals {
         Matcher m = DEST_NAME.matcher(line);
         if (m.find()) {
             String name = m.group(1).trim();
-            if (!locked && !name.isEmpty() && !name.equals(lastDestName)) {
+            if (locked) {
+                // 有权威源在位：这条语音日志**不参与**，但要留个痕迹 ——
+                // 用户在车上同时开着原厂导航和第三方高德，想知道"到底会不会被改目的地"，
+                // 看 /state 的 src 里有没有 destVoiceIgnored 就知道答案。
+                if (!name.isEmpty() && !name.equals(lastDestName)) {
+                    StateHub.get().setSource("destVoiceIgnored", name);
+                }
+            } else if (!name.isEmpty() && !name.equals(lastDestName)) {
                 lastDestName = name;
                 nameAt = System.currentTimeMillis();
                 lastAt = nameAt;

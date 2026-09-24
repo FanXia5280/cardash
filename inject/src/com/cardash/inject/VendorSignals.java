@@ -646,10 +646,13 @@ public final class VendorSignals {
             String s = String.valueOf(raw);
             hub.setSource("nav:" + alias, s.length() > 60 ? s.substring(0, 60) : s);
             if (alias.startsWith("Navigation/NaviInfo")) {
+                // 来源仲裁：高德广播（每秒在推）/ 通知栏在推时让位 ——
+                // 用户习惯原厂导航和第三方高德同时开，两路都往 navTitle/navEta
+                // 这些槽位写就会来回跳（见 StateHub.navClaim）。
+                if (!hub.navClaim("vendor:" + alias)) return true;
                 hub.navTitle = s;
                 hub.navActive = true;
                 hub.navUpdatedAt = System.currentTimeMillis();
-                hub.navSource = "vendor:" + alias;
             }
             return true;
         }
