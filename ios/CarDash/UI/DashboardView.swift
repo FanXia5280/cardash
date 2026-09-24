@@ -199,7 +199,12 @@ struct DashboardView: View {
         }
         .onChange(of: model.routeDest == nil) { gone in
             // 目的地没了（清除模拟路线 / 导航结束）⇒ 下次重新导航要重新"垫底"
-            if gone { navStarted = false }
+            if gone {
+                navStarted = false
+                // ⚠️ 顺手把路口放大图收掉：SDK 的 hide 回调在导航视图被拆掉之后不会再来了，
+                // 不收它就会一直盖在"速度"那一格上（用户实测：退出导航后放大图还在）。
+                crossImage = nil
+            }
         }
     }
 

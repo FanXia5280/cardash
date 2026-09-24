@@ -45,9 +45,13 @@ final class DashboardModel: ObservableObject {
     /// 没连车机时这三格是空的，用户就看不出来排版对不对 —— 所以模拟时自己填一份。
     @Published private(set) var mockNav: NavState?
 
-    /// 「模拟双闪」开关（用户 2026-09-24 要求：没车时先预览两边绿光效果）。
-    /// 开 = 强制当双闪（turn=3），优先级高于车机真实值。看 `displayTurn`。
-    @Published var mockHazard = false
+    /// 「模拟转向灯」：0 = 关（用真实值）、1 = 左转、2 = 右转、3 = 双闪。
+    /// 用户 2026-09-24 要求：没车时先预览两边绿光效果（左/右/双闪都要能试）。看 `displayTurn`。
+    @Published var mockTurn = 0
+
+    /// 「模拟超速」开关：没车/没电子眼数据时也能预览两边红光。
+    /// 看 `isOverspeed` —— 打开就直接当作超速。
+    @Published var mockOverspeed = false
 
     /// 现在是「模拟导航」测试模式吗（点了设置里那条「模拟一条导航路线」）。
     /// 真导航用 SDK 的实时导航（startGPSNavi），模拟模式用官方**模拟导航**
@@ -429,9 +433,9 @@ final class DashboardModel: ObservableObject {
     }
 
     /// 转向灯：0=灭 1=左 2=右 3=双闪。nil = 车机没这个数据（旧版车机 APK）。
-    /// 模拟双闪开关打开时强制返回 3（两边一起闪，预览效果用）。
+    /// 模拟转向灯选了方向时优先返回它（预览效果用）。
     var displayTurn: Int? {
-        if mockHazard { return 3 }
+        if mockTurn > 0 { return mockTurn }
         return carFresh ? car?.turn : nil
     }
 
@@ -461,6 +465,8 @@ final class DashboardModel: ObservableObject {
     /// 这个判断**自己算**，不用高德 SDK 的 `showOverSpeedPulse`（那是收费接口，
     /// 用户已明确只用官方免费功能）。
     var isOverspeed: Bool {
+        // 模拟超速：没车也能看红光效果（见设置里的开关）
+        if mockOverspeed { return true }
         guard let s = displaySpeed, s.isFinite else { return false }
         guard let cam = displayCamera, let d = cam.dist, d >= 0, d <= 300 else { return false }
 
