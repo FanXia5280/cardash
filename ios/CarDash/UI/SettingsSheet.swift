@@ -51,6 +51,15 @@ struct SettingsSheet: View {
                             Text(snap.ts.map { Self.tsFormat.string(from: Date(timeIntervalSince1970: $0 / 1000)) } ?? "-")
                                 .foregroundStyle(.secondary)
                         }
+                        // 目的地：手动在车机上点导航也应该在这里出现，
+                        // 来源会写明是「高德广播」还是「语音」，对不上就看这一行。
+                        HStack {
+                            Text("目的地")
+                            Spacer()
+                            Text(Self.destLine(snap.dest))
+                                .foregroundStyle(snap.dest == nil ? .secondary : .primary)
+                        }
+                        .font(.footnote)
                         if let src = snap.src, !src.isEmpty {
                             ForEach(src.keys.sorted(), id: \.self) { key in
                                 HStack {
@@ -186,6 +195,34 @@ struct SettingsSheet: View {
         guard let snap = model.car else { return "未连接" }
         if let v = snap.src?["apkVer"], !v.isEmpty { return v }
         return "旧版 APK（无版本标识）"
+    }
+
+    /// 「目的地」那一行怎么显示：名字 + 来源 + 坐标。
+    ///
+    /// ⚠️ 车机端只有**带坐标**的目的地才会下发（见 DestSignals.usable），
+    /// 所以这里能显示出来就说明能用来导航。
+    /// 来源 `amap` = 高德广播（手动点导航也能认出来），`voice` = 语音助手。
+    private static func destLine(_ d: Dest?) -> String {
+        guard let d else { return "（车机没在导航）" }
+        // 老老实实写 if-else：对 Optional 做 switch 的写法在这类地方栽过，
+        // 宁可啰嗦一点，别为省两行去烧一轮 CI。
+        let who: String
+        if d.src == "amap" {
+            who = "高德广播"
+        } else if d.src == "voice" {
+            who = "语音"
+        } else if let s = d.src, !s.isEmpty {
+            who = s
+        } else {
+            who = "?"
+        }
+        var s = "\(d.name ?? "未命名") · \(who)"
+        if let la = d.lat, let lo = d.lon {
+            s += String(format: " · %.5f,%.5f", la, lo)
+        } else {
+            s += " · 无坐标（不会导航）"
+        }
+        return s
     }
 
     private static let tsFormat: DateFormatter = {

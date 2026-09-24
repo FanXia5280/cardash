@@ -29,8 +29,10 @@ struct CarSnapshot: Codable, Equatable {
     var nav: NavState?
     /// 各字段的来源，用于排查（vhal / none 等）
     var src: [String: String]?
-    /// 车机导航的目的地。Android 侧从车机语音助手的 NLU 日志里解析出来
-    /// （见 DestSignals），有值就自动算路线画到地图上。
+    /// 车机导航的目的地。有值就自动跟着导航。
+    ///
+    /// Android 侧有两条来源（见 DestSignals）：高德车机版广播（权威，手动点导航也能认出来）
+    /// 和语音助手的 NLU 日志（兜底）。`src` 会告诉我们是哪一条。
     var dest: Dest?
 }
 
@@ -55,22 +57,31 @@ struct Dest: Codable, Hashable {
     var name: String?
     var lat: Double?
     var lon: Double?
+    /// 来源：`amap` = 高德车机版广播（权威，手动点导航也有）；
+    /// `voice` = 车机语音助手的 NLU 日志（兜底）。只用于诊断显示。
+    var src: String?
 
-    /// 换目的地才重算路线，避免每 250ms 拉一次 /state 就重算一次
-    var routeKey: String { "\(name ?? "")|\(lat ?? 0)|\(lon ?? 0)" }
+    /// 换目的地才重算路线，避免每 250ms 拉一次 /state 就重算一次。
+    ///
+    /// ⚠️ 只按**坐标**去重（名字变了但地方没变就别重算）：
+    /// 这里一重算，`NaviCoordinator` 就会重新算路 + `startGPSNavi()`，
+    /// 用户看到的是"导航闪一下从头再来"。
+    var routeKey: String { "\(lat ?? 0)|\(lon ?? 0)" }
 
     /// 这份目的地可信吗？
     ///
-    /// ⚠️ 背景（2026-09-23）：车机那边曾经把**车机自己的 GPS 位置**当目的地报上来，
-    /// 于是 IPA 画出来的路线跟车机完全不一样，而且车一动「目的地」就变。
-    /// 根因已在车机侧修掉（DestSignals 只认语音语义日志），这里再兜一道：
-    /// 要么有名字（可以地理编码），要么坐标像一份**合理范围内的经纬度**。
+    /// ⚠️ **2026-09-24 改紧：必须有合法坐标才算数**（以前"只有名字也算"）。
+    ///
+    /// 原因：车机侧任何一行带 `"destName":"X"` 的日志都可能被当成目的地
+    /// （别的进程也会打日志），而"只有名字"会让我们拿 X 去 `CLGeocoder`
+    /// 编一个地方出来 —— 编到另一个区/另一个市都很正常，表现就是
+    /// 「车机没改目的地，IPA 自己改了」。用户明确要求：**中间绝不导航到别的目的地**。
+    ///
+    /// 现在名字只用来显示（诊断里看得到），不再触发导航。
+    /// 车机侧也已经保证下发的目的地一定带坐标（见 DestSignals.usable）。
     var isUsable: Bool {
-        if let la = lat, let lo = lon, la != 0, lo != 0,
-           la > 3.5, la < 53.6, lo > 73.5, lo < 135.1 {
-            return true
-        }
-        return !(name ?? "").isEmpty
+        guard let la = lat, let lo = lon, la != 0, lo != 0 else { return false }
+        return la > 3.5 && la < 53.6 && lo > 73.5 && lo < 135.1
     }
 }
 

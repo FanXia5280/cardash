@@ -130,8 +130,21 @@ public final class StateHub {
         }
     }
 
+    /**
+     * 导航数据还新鲜吗（决定 /state 里 nav.active 报不报 true）。
+     *
+     * ⚠️ 2026-09-24 从 **15 秒放宽到 60 秒**：iPhone 是 250ms 轮询、**单帧就认** ——
+     * 只要某一帧报 active:false，它就会把整条路线拆掉（`NaviCoordinator` 收到
+     * 目的地 nil 就 `stopNavi()`）。而引导广播偶尔断十几秒是正常的
+     * （高德重算路线、切前后台、进隧道），15 秒的窗口太紧，
+     * 表现就是"导航自己退出了 / 闪一下从头算路"。
+     *
+     * 60 秒和 {@link AmapSignals#maybeClearIfNaviEnded} 的判据一致；
+     * 真的结束了由那边清 navActive，或者由会话看门狗兜底。
+     * 用户明确要求：**中间不中断导航**，宁可多显示一会儿旧数据。
+     */
     private boolean navFresh() {
-        return navActive && (System.currentTimeMillis() - navUpdatedAt) < 15000L;
+        return navActive && (System.currentTimeMillis() - navUpdatedAt) < 60000L;
     }
 
     /** 车速在 3 秒内没更新就认为链路断了（车不动时车机仍会周期上报，通常没问题） */
@@ -147,11 +160,17 @@ public final class StateHub {
         // 车速不下发 —— 仪表只用 iPhone 自己的 GPS。
         // 车机测到的值放在 carSpeed 里，仅供诊断对照。
         b.append(",\"carSpeed\":").append(Json.num(carSpeedKmh));
-        // 车机导航目的地。有值的话 iPhone 那边会自动算一条路线画在地图上。
-        if (DestSignals.fresh()) {
+        // 车机导航目的地。有值的话 iPhone 那边会自动跟着导航。
+        //
+        // 来源有两条（见 DestSignals）：高德广播 = 权威源（手动点导航也能认出来，
+        // 只要会话还在就一直下发）；语音 NLU = 兜底（30 分钟窗口）。
+        // ⚠️ 只有名字没有坐标的一律不下发 —— iPhone 拿名字去地理编码可能编到
+        //    完全另一个地方，那正是"目的地被改掉"。
+        if (DestSignals.usable()) {
             b.append(",\"dest\":{\"name\":").append(Json.esc(DestSignals.destName()))
              .append(",\"lat\":").append(Json.num(DestSignals.lat()))
              .append(",\"lon\":").append(Json.num(DestSignals.lon()))
+             .append(",\"src\":").append(Json.esc(DestSignals.source()))
              .append('}');
         }
         // 车机自己 HUD 上的两行导航文字（对照用，iPhone 目前不显示）

@@ -73,11 +73,71 @@ public final class AmapSignals {
 
     private static void handle(Intent intent) {
         if (intent == null) return;
+        // 留一份原始 Intent 给 /logcat 的全量 extras dump。
+        // ⚠️ 2026-09-24 之前这里**漏了赋值**（声明了、读了、从没写过），
+        //    所以 /logcat 里那段「最近一条引导广播的全部 extras」永远是
+        //    "（还没收到过广播）" —— 而它正是用来核对 key 真名的工具。
+        lastIntent = intent;
+
+        // 目的地：**每一条广播都翻一遍**（KEY_TYPE 各家版本不一样，与其猜不如全试）。
+        // 用户 2026-09-24 的要求：车机上手动点导航，IPA 也要能识别目的地 ——
+        // 手动导航没有语音日志，只能从高德自己的广播里拿。只读，不干扰。
+        try {
+            DestSignals.onAmapBroadcast(intent);
+        } catch (Throwable t) {
+            Diagnostics.log("高德目的地解析失败: " + t);
+        }
+
         int keyType = intent.getIntExtra("KEY_TYPE", -1);
         if (keyType == TYPE_GUIDE) {
             onGuide(intent);
         } else if (keyType == TYPE_STATE) {
             onState(intent);
+        }
+    }
+
+    /**
+     * 车机高德现在是不是**真的在导航**（巡航不算 —— 巡航没有目的地）。
+     *
+     * <p>为什么不能只看引导广播：引导信息（KEY_TYPE=10001）**巡航时也发**
+     * （见类注释）。所以「在收引导广播」≠「在导航」。判据要结合驾驶模式：
+     * 9/24/25 = 巡航 ⇒ 一定不是在导航。
+     *
+     * <p>⚠️ 导航中 EXTRA_STATE 会 8 ↔ 40 每分钟翻一次（40 落到"空闲"档），
+     * 所以模式不是 1 时**要看引导广播还新不新鲜**，不能立刻判否。
+     */
+    public static boolean navigating() {
+        if (mode == 2) return false;                    // 巡航
+        if (lastGuideAt > 0 && System.currentTimeMillis() - lastGuideAt < 60000L) return true;
+        return mode == 1;
+    }
+
+    /** {@link #navigating()} 连续不成立是从什么时候开始的（0 = 现在还成立） */
+    private static volatile long notNavigatingSince;
+
+    /**
+     * 导航会话看门狗 —— 由 {@link BridgeRuntime} 的心跳线程每 10 秒调一次。
+     *
+     * <p>判据：{@link #navigating()} **连续 90 秒**不成立，才认为这次导航真的结束了，
+     * 顺手把高德给的权威目的地清掉（{@link DestSignals#endSession()}）。
+     *
+     * <p>⚠️ 90 秒的去抖是故意的：引导广播偶尔断十几秒（高德重算路线、切前后台、
+     * 进隧道）是正常的，那会儿判成"结束"会让 iPhone 立刻退出导航 ——
+     * 用户明确要求「中间不中断导航」。宁可晚 90 秒收尾，也不要中途掉。
+     */
+    public static void tick() {
+        if (navigating()) {
+            notNavigatingSince = 0;
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (notNavigatingSince == 0) {
+            notNavigatingSince = now;
+            return;
+        }
+        if (now - notNavigatingSince >= 90000L) {
+            notNavigatingSince = 0;
+            DestSignals.endSession();
         }
     }
 
@@ -215,8 +275,12 @@ public final class AmapSignals {
     /** 给 /logcat 用 */
     public static String rawSummary() {
         return "  模式 = " + (mode == 1 ? "导航中" : mode == 2 ? "巡航中" : "空闲")
+                + "   （判" + (navigating() ? "在导航" : "不在导航") + "）"
                 + "   距上次引导信息 = "
                 + (lastGuideAt == 0 ? "从未" : ((System.currentTimeMillis() - lastGuideAt) / 1000) + " 秒前")
+                + "\n  目的地来源 = " + (DestSignals.source() == null ? "--" : DestSignals.source())
+                + "   会话看门狗 = " + (notNavigatingSince == 0 ? "在导航/未开始"
+                        : ("不成立 " + ((System.currentTimeMillis() - notNavigatingSince) / 1000) + " 秒"))
                 + "\n  最后一条 = " + lastRaw + "\n";
     }
 

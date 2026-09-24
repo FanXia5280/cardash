@@ -223,6 +223,14 @@ public final class BridgeRuntime {
                         return;
                     }
                     tick++;
+                    // 导航会话看门狗：判断"车机导航真的结束了吗"，
+                    // 结束才清掉高德给的权威目的地（详见 AmapSignals.tick 的注释）。
+                    // 每 10 秒一问，配合 90 秒的去抖，足够稳。
+                    try {
+                        AmapSignals.tick();
+                    } catch (Throwable ignored) {
+                        // 忽略
+                    }
                     try {
                         Diagnostics.heart(heartbeatText());
                     } catch (Throwable ignored) {

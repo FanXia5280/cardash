@@ -27,6 +27,12 @@ final class DashboardModel: ObservableObject {
     @Published private(set) var routeDest: CLLocationCoordinate2D?
     /// 已经算过路线的那份目的地，用来去重
     private var routedKey: String?
+    /// 「导航看起来结束了」是从什么时候开始的（nil = 现在还在导航）。
+    /// ⚠️ 单帧不算数 —— 见 `beginRouteStopIfNeeded()` 的说明：
+    /// 用户要求中间不中断导航，而车机那边报 active:false 可能只是引导广播断了几秒。
+    private var navOffSince: Date?
+    /// 这一轮"收路线"已经执行过了，别每 250ms 重复触发
+    private var stopPending = false
     /// 测试用：手动塞的假目的地。正式版可以连这块一起删掉。
     @Published private(set) var mockDest: Dest?
     /// 模拟路线时顺带塞的假导航信息。
@@ -442,8 +448,9 @@ final class DashboardModel: ObservableObject {
 
     /// 车机一报目的地，就把**目的地坐标**解出来交给导航视图。
     ///
-    /// 目的地是 Android 侧从车机语音助手的 NLU 日志里解析出来的
-    /// （D.apk 的 AssistantUtil 就是这么干的，我们套了同一套正则）。
+    /// 目的地有两条来源（Android 侧见 `DestSignals`）：
+    /// **高德车机版广播**（权威 —— 车机上手动点导航也算，用户 2026-09-24 的要求）
+    /// 和**语音助手的 NLU 日志**（兜底）。这里不区分，都按同一套规则处理。
     ///
     /// ⚠️ 2026-09-24 用户要求：**自绘路线整块删掉**。导航已经是高德官方视图
     /// （`AMapNaviDriveView`，路线由 SDK 自己画，更准也更省电），我们以前那套
@@ -456,18 +463,26 @@ final class DashboardModel: ObservableObject {
         // 只有**车机导航开着**的时候，才认车机报的目的地。
         //
         // ⚠️ 2026-09-23：以前不看这个，只要 /state 里有 dest 就一直算下去。
-        // 车机那边的 dest 有 30 分钟新鲜度窗口，导航早就结束了它还在，
+        // 车机那边的 dest 有新鲜度窗口，导航早就结束了它还在，
         // 结果仪表上长期挂着一条不存在的路线（用户说「IPA 会自己改目的地」）。
         let navOn = car?.nav?.isActive == true
         // 测试按钮塞的假目的地优先；没有就用车机的（前提是车机在导航）
         let candidate = mockDest ?? (navOn ? car?.dest : nil)
         guard let dest = candidate, dest.isUsable else {
-            if routeDest != nil {
-                routeDest = nil
-                routedKey = nil
-            }
+            // ⚠️ **不要一帧就放手**（2026-09-24 用户要求：中间不中断导航）。
+            //
+            // 车机侧判断"导航还在不在"靠的是引导广播的新鲜度（60 秒窗口），
+            // 高德重算路线 / 切前后台 / 进隧道时会短暂断流 —— 这时 /state 会报
+            // `nav.active:false`，而这里一旦把 routeDest 清掉，
+            // `NaviCoordinator` 立刻 `stopNavi()`，用户看到的就是「导航自己退出了」。
+            //
+            // 所以加一道去抖：连续 20 秒都拿不到可用目的地，才真的放手。
+            // 真结束了也不会拖太久（车机那边还有 90 秒的会话看门狗）。
+            beginRouteStopIfNeeded()
             return
         }
+        navOffSince = nil
+        stopPending = false
         guard coord != nil else { return }
 
         let key = dest.routeKey
@@ -493,6 +508,26 @@ final class DashboardModel: ObservableObject {
             }
             DispatchQueue.main.async { self.routeDest = to }
         }
+    }
+
+    /// 目的地这一帧拿不到了 —— 但不马上收路线，等 20 秒确认。
+    ///
+    /// 为什么要去抖（2026-09-24 用户要求「中间不中断导航」）：
+    /// `routeDest` 一变 nil，`NaviCoordinator.update(to: nil)` 就会 `stopNavi()`，
+    /// 画面掉回普通地图、顶栏的导航摘要也没了。而车机侧报 `nav.active:false`
+    /// 可能只是引导广播断了一小会儿（高德重算路线、切前后台、进隧道）。
+    /// 车机那边已经有一个 90 秒的会话看门狗兜底，这里 20 秒足够安全。
+    private func beginRouteStopIfNeeded() {
+        guard routeDest != nil, !stopPending else { return }
+        let now = Date()
+        guard let since = navOffSince else {
+            navOffSince = now          // 第一帧：先记下时间，给一次机会
+            return
+        }
+        guard now.timeIntervalSince(since) >= 20 else { return }
+        stopPending = true
+        routeDest = nil
+        routedKey = nil
     }
 
     /// 两点间的方位角（度，顺时针从北起，和高德/GPS course 同一约定）
