@@ -139,6 +139,66 @@ final class DashboardModel: ObservableObject {
         }.resume()
     }
 
+    /// 一键抓取**全部**诊断，拼成一份 —— 排查时用户点一次、复制一次就能整段发过来。
+    ///
+    /// 依次取 /state → /logcat → /diag → /log → /scan，每段带分隔标题；
+    /// 开头附上 App 版本 / 桥接版本 / 链路 / 时间 —— 拿到就知道是哪一版、连没连上车机。
+    ///
+    /// ⚠️ 必须**串行**：车机那个 HTTP 服务是单线程的，并发抓会互相等超时。
+    func fetchAllDiagnostics(completion: @escaping (String) -> Void) {
+        let items: [(String, String)] = [
+            ("/state", "状态快照（JSON）—— 目的地 / 导航来源"),
+            ("/logcat", "logcat 取数诊断 —— 高德广播的全部 key 在这里"),
+            ("/diag", "车机运行状态"),
+            ("/log", "桥接运行日志"),
+            ("/scan", "厂商属性扫描"),
+        ]
+        var parts: [String] = [diagnosticHeader()]
+
+        func step(_ i: Int) {
+            if i >= items.count {
+                let bar = String(repeating: "=", count: 60)
+                parts.append("\n" + bar + "\n【诊断结束】共 \(items.count) 段\n" + bar)
+                completion(parts.joined(separator: "\n"))
+                return
+            }
+            let (path, title) = items[i]
+            fetchText(path: path) { text in
+                let bar = String(repeating: "=", count: 60)
+                parts.append("\n" + bar + "\n【" + title + "】" + path + "\n" + bar + "\n" + text)
+                step(i + 1)
+            }
+        }
+        step(0)
+    }
+
+    /// 诊断开头的元信息。拿到日志先能判断是哪一版、连没连上车机 ——
+    /// 之前每次都要追问「你装的哪个版本」，就是缺这一段。
+    private func diagnosticHeader() -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let app = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        let bridge: String
+        if let v = car?.src?["apkVer"], !v.isEmpty {
+            bridge = v
+        } else if car == nil {
+            bridge = "未连接（拿不到桥接版本）"
+        } else {
+            bridge = "旧版 APK（无版本标识）"
+        }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return """
+        CarDash 全部诊断（一键复制）
+          抓取时间 : \(f.string(from: Date()))
+          App 版本 : \(app) (\(build))
+          桥接版本 : \(bridge)
+          链路状态 : \(link.label)
+          车机地址 : \(carHost ?? "-")
+          当前目的地: \(car?.dest?.name ?? "（车机没在导航）")
+        """
+    }
+
     // MARK: - 生命周期
 
     func start() {

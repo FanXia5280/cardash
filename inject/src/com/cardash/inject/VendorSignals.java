@@ -34,14 +34,26 @@ import java.util.regex.Pattern;
  */
 public final class VendorSignals {
 
-    // v26.0923 起 CarS05InfoUtil 改名为 S05VehicleDataMonitor（挪到 util.s05 包下）。
-    // 好消息：老代码反射的这些成员**名字一个没变** ——
-    //   cacheCarS05Info（CacheCarS05Info 缓存，字段全同）、currentDrivingSpeedKmh、
-    //   onPsAliasChangedListeners / onInfoChangedListeners / onDetailedInfoChangedListeners、
-    //   virtualCarPropertyManager、polymericService、virtualCarRegistered、
-    //   bindVirtualCarPropertyManager / connectPolymericService / registerVirtualCarCallbacks
-    // 所以只要换类名即可，读缓存 + 挂实时监听 + 主动补绑的逻辑原样复用。
-    private static final String UTIL = "com.deepalhome.launcher.util.s05.S05VehicleDataMonitor";
+    /**
+     * 车身信号的取值类 —— ⚠️ **两个底包的类名不一样**，已用 dex 逐个核对过：
+     *   旧底包 v26.0521 → {@code com.deepalhome.launcher.util.CarS05InfoUtil}
+     *   新底包 v26.0923 → {@code com.deepalhome.launcher.util.s05.S05VehicleDataMonitor}
+     *
+     * 2026-09-24 踩的坑：移植新底包时只写了 S05VehicleDataMonitor，
+     * 结果旧底包打出来的包装到车上 Class.forName 直接失败 ⇒
+     * **车速 / 档位 / 续航 / 电量 / 转向灯全是空的**。
+     * 所以这里按顺序两个都试，哪个存在用哪个 —— 一份代码同时支持两个底包。
+     *
+     * 两个类里我们要反射的成员名字是一样的：cacheCarS05Info（CacheCarS05Info，字段全同）、
+     * currentDrivingSpeedKmh、onPsAliasChangedListeners / onInfoChangedListeners /
+     * onDetailedInfoChangedListeners、virtualCarPropertyManager、polymericService、
+     * virtualCarRegistered、bindVirtualCarPropertyManager / connectPolymericService /
+     * registerVirtualCarCallbacks ⇒ 只是换类名，读缓存 + 挂监听 + 主动补绑原样复用。
+     */
+    private static final String[] UTIL_CANDIDATES = {
+            "com.deepalhome.launcher.util.s05.S05VehicleDataMonitor",   // v26.0923 起
+            "com.deepalhome.launcher.util.CarS05InfoUtil",              // v26.0521 及更早
+    };
     private static final String CACHE = "com.deepalhome.launcher.carinfo.CacheCarS05Info";
 
     // ── 我们需要的别名 ──
@@ -109,7 +121,9 @@ public final class VendorSignals {
 
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:\\.\\d+)?");
 
-    private Object util;              // CarS05InfoUtil.INSTANCE
+    private Object util;              // 取值类的 INSTANCE（两个底包名不同，见 UTIL_CANDIDATES）
+    /** 实际连上的那个类名（诊断里能看到用的是哪个底包的类） */
+    private String utilName;
     private Method psGet;             // psGetValueSync(String)
     private Method startMonitor;      // startMonitor()
     private Field cacheField;         // static CacheCarS05Info cacheCarS05Info
@@ -189,12 +203,29 @@ public final class VendorSignals {
 
     private boolean connect() {
         StateHub hub = StateHub.get();
+        for (String name : UTIL_CANDIDATES) {
+            if (connectOne(name)) {
+                hub.setSource("vendor", "connected");
+                hub.setSource("vcarMgr", mgr == null ? "null" : "ok");
+                Diagnostics.log("厂商通道已连上: " + utilName);
+                return true;
+            }
+        }
+        hub.setSource("vendor", "unavailable");
+        hub.carError = "厂商SDK: 两个底包的取值类都连不上（见 /log 里逐条原因）";
+        Diagnostics.log("厂商通道不可用：两个候选类都失败");
+        return false;
+    }
+
+    /** 拿某一个候选类名去连；失败把状态清干净，别影响下一个候选。 */
+    private boolean connectOne(String name) {
+        StateHub hub = StateHub.get();
         try {
-            Class<?> c = Class.forName(UTIL);
+            Class<?> c = Class.forName(name);
             utilClass = c;
             util = c.getDeclaredField("INSTANCE").get(null);
             if (util == null) {
-                hub.setSource("vendor", "CarS05InfoUtil.INSTANCE 为 null");
+                Diagnostics.log("厂商通道 " + name + ": INSTANCE 为 null");
                 return false;
             }
 
@@ -245,15 +276,20 @@ public final class VendorSignals {
             }
 
             Class.forName(CACHE);   // 只是确认类在
-
-            hub.setSource("vendor", "connected");
-            hub.setSource("vcarMgr", mgr == null ? "null" : "ok");
-            Diagnostics.log("厂商通道已连上: " + UTIL);
+            utilName = name;
             return true;
         } catch (Throwable t) {
-            hub.setSource("vendor", "unavailable");
-            hub.carError = "厂商SDK: " + t.getClass().getSimpleName() + ": " + t.getMessage();
-            Diagnostics.log("厂商通道不可用: " + t);
+            Diagnostics.log("厂商通道 " + name + " 不可用: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+            // 这次试失败了，把手柄清干净，别让上一个候选的残留影响下一个
+            utilClass = null;
+            util = null;
+            utilName = null;
+            psGet = null;
+            startMonitor = null;
+            cacheField = null;
+            mgr = null;
+            getValueMethod = null;
             return false;
         }
     }

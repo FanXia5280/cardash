@@ -12,6 +12,8 @@ struct SettingsSheet: View {
     @State private var diagText = ""
     @State private var showDiag = false
     @State private var loadingDiag = false
+    /// 一键诊断抓完已经自动放进剪贴板了 —— 打开就显示「已复制」
+    @State private var autoCopied = false
 
     var body: some View {
         NavigationView {
@@ -112,6 +114,7 @@ struct SettingsSheet: View {
                             ProgressView()
                         }
                     } else {
+                        Button("一键复制全部诊断（发我排查）") { loadAll() }
                         Button("logcat 取数诊断") { load("/logcat", "logcat 取数诊断") }
                         Button("状态快照（JSON）") { load("/state", "状态快照（JSON）") }
                         Button("车机运行状态") { load("/diag", "车机运行状态") }
@@ -121,11 +124,11 @@ struct SettingsSheet: View {
                 } header: {
                     Text("车机诊断")
                 } footer: {
-                    Text("车机上没有浏览器也没关系，这里直接读。"
-                         + "打开后点右上角「复制」就能整段发出来。\n"
-                         + "排查导航/目的地问题时，把「logcat 取数诊断」和"
-                         + "「状态快照（JSON）」两份一起发 —— 前者有高德广播的全部 key，"
-                         + "后者有当前的目的地和导航来源。")
+                    Text("首选上面那条「一键复制全部诊断」—— 一次抓完"
+                         + " /state、/logcat、/diag、/log、/scan 五段，开头带版本和链路信息，"
+                         + "抓完直接进剪贴板，粘贴发出来就行。\n"
+                         + "下面是分开看的入口：logcat 有高德广播的全部 key，"
+                         + "状态快照有当前目的地和导航来源。")
                 }
 
                 Section("本机传感器") {
@@ -173,7 +176,7 @@ struct SettingsSheet: View {
         }
         .navigationViewStyle(.stack)
         .sheet(isPresented: $showDiag) {
-            DiagView(title: diagTitle, text: diagText)
+            DiagView(title: diagTitle, text: diagText, preCopied: autoCopied)
         }
     }
 
@@ -184,6 +187,21 @@ struct SettingsSheet: View {
         model.fetchText(path: path) { text in
             diagText = text
             loadingDiag = false
+            autoCopied = false
+            showDiag = true
+        }
+    }
+
+    /// 一键抓全部：抓完**直接放进剪贴板** —— 用户点一次就能粘出去，少一步操作。
+    private func loadAll() {
+        loadingDiag = true
+        diagTitle = "全部诊断"
+        diagText = "正在依次抓取 /state → /logcat → /diag → /log → /scan …"
+        model.fetchAllDiagnostics { text in
+            diagText = text
+            loadingDiag = false
+            UIPasteboard.general.string = text
+            autoCopied = true
             showDiag = true
         }
     }
@@ -249,6 +267,8 @@ struct SettingsSheet: View {
 struct DiagView: View {
     let title: String
     let text: String
+    /// 一键诊断已经自动复制过了 —— 打开就显示「已复制」，用户直接去粘
+    var preCopied = false
 
     @Environment(\.dismiss) private var dismiss
     @State private var copied = false
@@ -264,6 +284,7 @@ struct DiagView: View {
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear { copied = preCopied }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
