@@ -23,7 +23,17 @@ final class LocalSensors: NSObject, CLLocationManagerDelegate {
         manager.activityType = .automotiveNavigation
         manager.distanceFilter = kCLDistanceFilterNone
         manager.pausesLocationUpdatesAutomatically = false
-        manager.allowsBackgroundLocationUpdates = false
+
+        // ⚠️ 2026-09-24 自查发现的**自相矛盾**：Info.plist 里声明了
+        //    `UIBackgroundModes: location`（要后台跑），这里却把后台定位**关着** ——
+        //    那样声明等于白写，iOS 会在 App 切后台/锁屏后把它挂起，
+        //    轮询和导航引擎一起停（仪表冻在最后那一帧）。
+        //    用户习惯是这块手机在车里一直当仪表用，中途切出去看别的 App、
+        //    或者手动锁屏都很常见，所以这里必须打开。
+        //    （打开的前提是 plist 里真有 location 后台模式，我们确实有，
+        //      否则 iOS 会直接抛异常。）
+        manager.allowsBackgroundLocationUpdates = true
+        manager.showsBackgroundLocationIndicator = false
     }
 
     func start() {

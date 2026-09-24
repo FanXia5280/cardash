@@ -64,6 +64,9 @@ final class DashboardModel: ObservableObject {
     private var timer: Timer?
     private var watchdog: Timer?
     private var inFlight = false
+    /// 上一次请求是什么时候发出去的。见 poll()：完成回调万一没回来，
+    /// inFlight 会永远卡在 true，整个仪表就再也不刷新了。
+    private var inFlightSince = Date.distantPast
     private var lastSuccess = Date.distantPast
     private var lastScan = Date.distantPast
     private var scanning = false
@@ -188,9 +191,31 @@ final class DashboardModel: ObservableObject {
     }
 
     private func watchdogTick() {
+        // 车机失联太久 ⇒ 收掉导航（理由见 dropRouteBecauseCarGone）
+        if mockDest == nil, routeDest != nil,
+           Date().timeIntervalSince(lastSuccess) > 150 {
+            dropRouteBecauseCarGone()
+        }
         guard Date().timeIntervalSince(lastSuccess) > 8 else { return }
         guard Date().timeIntervalSince(lastScan) > 45 else { return }
         scanSubnet()
+    }
+
+    /// 车机失联太久（>150 秒）⇒ 认为车已经熄火/关机，把导航收掉。
+    ///
+    /// ⚠️ 2026-09-24 自查：`syncDestination()` 只在**拉取成功**时才跑，
+    /// 所以车机一断电，手机端再也收不到任何消息 ⇒ `routeDest` 会一直留着，
+    /// 导航引擎继续空转（用户习惯：熄火下车、走远就离开车机热点了）。
+    /// 表现是"人都进楼了，手机上还在导航"。
+    ///
+    /// 150 秒是故意留宽的：行车途中热点打个嗝（几秒、几十秒）绝不能当成结束，
+    /// 真断了这么久说明车那边已经不在了。重启车机后自然重来一遍
+    /// （车机自己的状态是内存态，重启就没有目的地了）。
+    private func dropRouteBecauseCarGone() {
+        navOffSince = nil
+        stopPending = false
+        routeDest = nil
+        routedKey = nil
     }
 
     // MARK: - 轮询
@@ -211,8 +236,14 @@ final class DashboardModel: ObservableObject {
             link = scanning ? .scanning : .idle
             return
         }
-        guard !inFlight else { return }
+        // ⚠️ 不能只看 `inFlight` 这个布尔（2026-09-24 自查）：它只在完成回调里
+        //    才会被清掉，万一那个回调没执行（App 被挂起、网络栈异常），
+        //    它就永远卡在 true ⇒ `poll()` 永远直接 return ⇒ **整个仪表再也不刷新**，
+        //    而且不报错、界面看着还"活着"。所以配一个时间闸门：
+        //    请求超时是 2 秒，超过 3 秒还没回来就认为它废了，放新的出去。
+        if inFlight, Date().timeIntervalSince(inFlightSince) < 3 { return }
         inFlight = true
+        inFlightSince = Date()
 
         session.dataTask(with: url) { [weak self] data, response, error in
             DispatchQueue.main.async {
