@@ -177,14 +177,15 @@ def main():
                              '--lib', ajar, '--output', os.path.join(build, 'dex')] + classes)
     if FAILED:
         return
-    dex2 = os.path.join(build, 'classes2.dex')
-    os.replace(os.path.join(build, 'dex', 'classes.dex'), dex2)
-    say('   classes2.dex = %d 字节' % os.path.getsize(dex2))
+    injected = os.path.join(build, 'injected.dex')
+    os.replace(os.path.join(build, 'dex', 'classes.dex'), injected)
+    say('   注入 dex = %d 字节（inject_manifest 会自动挑下一个 classesN.dex 槽位）'
+        % os.path.getsize(injected))
 
     # ── 3. 改写清单 + 注入 dex
     patched = os.path.join(build, 'patched.apk')
     cmd = [sys.executable, os.path.join(ROOT, 'tools', 'inject_manifest.py'),
-           SOURCE_APK, dex2, patched]
+           SOURCE_APK, injected, patched]
     if len(sys.argv) > 3 and sys.argv[3].strip():
         cmd.append(sys.argv[3])
         if len(sys.argv) > 4 and sys.argv[4].strip():

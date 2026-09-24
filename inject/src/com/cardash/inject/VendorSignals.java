@@ -34,7 +34,14 @@ import java.util.regex.Pattern;
  */
 public final class VendorSignals {
 
-    private static final String UTIL = "com.deepalhome.launcher.util.CarS05InfoUtil";
+    // v26.0923 起 CarS05InfoUtil 改名为 S05VehicleDataMonitor（挪到 util.s05 包下）。
+    // 好消息：老代码反射的这些成员**名字一个没变** ——
+    //   cacheCarS05Info（CacheCarS05Info 缓存，字段全同）、currentDrivingSpeedKmh、
+    //   onPsAliasChangedListeners / onInfoChangedListeners / onDetailedInfoChangedListeners、
+    //   virtualCarPropertyManager、polymericService、virtualCarRegistered、
+    //   bindVirtualCarPropertyManager / connectPolymericService / registerVirtualCarCallbacks
+    // 所以只要换类名即可，读缓存 + 挂实时监听 + 主动补绑的逻辑原样复用。
+    private static final String UTIL = "com.deepalhome.launcher.util.s05.S05VehicleDataMonitor";
     private static final String CACHE = "com.deepalhome.launcher.carinfo.CacheCarS05Info";
 
     // ── 我们需要的别名 ──
@@ -193,8 +200,16 @@ public final class VendorSignals {
                 return false;
             }
 
-            psGet = c.getDeclaredMethod("psGetValueSync", String.class);
-            psGet.setAccessible(true);
+            // 新版把 psGetValueSync 改成了 psGetValue，而且是**异步 void**（推给
+            // onPsAliasChangedListeners），同步按别名取值这条路已经没了。
+            // 所以这里拿不到 psGetValueSync 就置空 —— 转向灯/续航/档位都改走
+            // cacheCarS05Info 缓存 + 实时监听，功能不受影响（/scan 那个诊断也会随之失效）。
+            try {
+                psGet = c.getDeclaredMethod("psGetValueSync", String.class);
+                psGet.setAccessible(true);
+            } catch (Throwable t) {
+                psGet = null;
+            }
 
             try {
                 startMonitor = c.getDeclaredMethod("startMonitor");

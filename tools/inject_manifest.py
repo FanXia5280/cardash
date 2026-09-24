@@ -292,8 +292,15 @@ def build_apk(src, dex_path, out, version_code, version_name, quiet=False,
         for need in ('AndroidManifest.xml', 'classes.dex', 'resources.arsc'):
             if need not in names:
                 die('源 APK 缺少 ' + need)
-        if 'classes2.dex' in names:
-            die('源 APK 已存在 classes2.dex，请用原始包')
+        # 新版底包自带 classes2.dex（multi-dex）。自动选下一个空的 classesN.dex 槽位：
+        # classes.dex 计为 1、classes2.dex 计为 2……我们注入的 dex 放最末。
+        existing = []
+        for n in names:
+            if n.startswith('classes') and n.endswith('.dex'):
+                core = n[len('classes'):-len('.dex')]
+                existing.append(int(core) if core.isdigit() else 1)
+        next_idx = (max(existing) + 1) if existing else 1
+        dex_entry = 'classes.dex' if next_idx == 1 else 'classes%d.dex' % next_idx
 
         new_manifest, info = patch_manifest(zin.read('AndroidManifest.xml'),
                                             version_code, version_name, drop_shared_uid,
@@ -305,7 +312,7 @@ def build_apk(src, dex_path, out, version_code, version_name, quiet=False,
                 die('找不到 ' + dex_path)
             dex = open(dex_path, 'rb').read()
             if not dex.startswith(b'dex\n'):
-                die('classes2.dex 不是合法的 dex')
+                die('注入的 dex 不是合法的 dex')
 
         with zipfile.ZipFile(out, 'w') as zout:
             for item in zin.infolist():
@@ -320,7 +327,7 @@ def build_apk(src, dex_path, out, version_code, version_name, quiet=False,
                 else:
                     zout.writestr(item, data)
             if dex:
-                zi = zipfile.ZipInfo('classes2.dex')
+                zi = zipfile.ZipInfo(dex_entry)
                 zi.compress_type = zipfile.ZIP_DEFLATED
                 zout.writestr(zi, dex)
 
@@ -329,7 +336,7 @@ def build_apk(src, dex_path, out, version_code, version_name, quiet=False,
         print('versionName "%s" → "%s"' % (info['old_version_name'], info['new_version_name']))
         print('字符串池 %d 项' % info['strings'])
         if dex:
-            print('已注入 classes2.dex（%d 字节）' % len(dex))
+            print('已注入 %s（%d 字节）' % (dex_entry, len(dex)))
         print('输出: %s (%.1f MB)' % (out, os.path.getsize(out) / 1048576))
     return info
 
