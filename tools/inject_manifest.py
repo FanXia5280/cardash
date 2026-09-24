@@ -46,6 +46,12 @@ A11Y_METADATA = 'android.accessibilityservice'
 # 真要让桥接在 Android 13+ 上跑，应该改 D.apk 的自检逻辑，而不是硬塞权限。
 EXTRA_PERMISSIONS = []
 
+# 模拟器版（--no-shared-uid / --emu）额外要补的权限：
+# 桌面自己的服务（LogcatMonitorService 等）在 targetSdk 34 + Android 15 上
+# startForeground 必须有类型，否则 MissingForegroundServiceTypeException 崩整个进程。
+# dataSync 对应的就是 FOREGROUND_SERVICE_DATA_SYNC（normal 权限，装时自动授予）。
+EMU_FGS_PERMISSIONS = ['android.permission.FOREGROUND_SERVICE_DATA_SYNC']
+
 
 def die(msg):
     print('!! ' + msg)
@@ -81,10 +87,10 @@ def find_a11y_config_res(doc):
     return None
 
 
-def build_permissions(doc, ns):
+def build_permissions(doc, ns, extra):
     """补声明权限，插在 <application> 之前。"""
     toks = []
-    for perm in EXTRA_PERMISSIONS:
+    for perm in extra:
         toks.append(Token('start', name=doc.add_string('uses-permission'),
                           attrs=[axml.make_string_attr(doc, 'name', perm, ns)]))
         toks.append(Token('end', name=doc.add_string('uses-permission')))
@@ -258,13 +264,25 @@ def patch_manifest(data, version_code=None, version_name=None, drop_shared_uid=F
         die('找不到 </application>')
 
     # 补权限要插在 <application> 之前，插入后 </application> 的位置要相应后移
-    perms = build_permissions(doc, ns)
+    emu_perms = EXTRA_PERMISSIONS + (EMU_FGS_PERMISSIONS if drop_shared_uid else [])
+    perms = build_permissions(doc, ns, emu_perms)
     if perms:
         doc.tokens[ai:ai] = perms
         ae += len(perms)
-        print('补声明权限 %d 条' % (len(EXTRA_PERMISSIONS)))
+        print('补声明权限 %d 条' % (len(emu_perms)))
 
     doc.tokens[ae:ae] = build_components(doc, ns, a11y_res)
+
+    if drop_shared_uid:
+        # 模拟器（Android 15）补丁：桌面自己的服务在 targetSdk 34 + Android 15 上
+        # startForeground 没类型会抛 MissingForegroundServiceTypeException（用户 MuMu 实测，
+        # LogcatMonitorService 第一个崩，把整个进程带崩）。给**所有** <service> 补
+        # foregroundServiceType=dataSync（我们注入的 BridgeService 本来就有，会被跳过）。
+        for t in doc.tokens:
+            if t.kind == 'start' and doc.string(t.name) == 'service':
+                if not any(doc.string(a.name) == 'foregroundServiceType' for a in t.attrs):
+                    t.attrs.append(axml.make_int_attr(doc, 'foregroundServiceType',
+                                                      FGS_DATA_SYNC, ns))
 
     out = axml.emit(doc)
     info = {
