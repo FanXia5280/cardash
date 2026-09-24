@@ -240,8 +240,11 @@ final class CarDotView: MAAnnotationView {
     private let ring = CAShapeLayer()
     private let core = CAShapeLayer()
     private var ready = false
+    private static let breatheKey = "breathe"
 
-    private static let side: CGFloat = 34
+    /// 视图尺寸：要**装得下扩到最大的光晕**（haloRadius × 1.7 ≈ 25.5，见 `startBreathing`），
+    /// 否则万一 SDK 按 bounds 裁切，呼吸就又被裁没了。34 那种小尺寸只够放圆点本身。
+    private static let side: CGFloat = 64
     private static let coreRadius: CGFloat = 9
     private static let ringRadius: CGFloat = 11.5
     private static let haloRadius: CGFloat = 15
@@ -252,18 +255,20 @@ final class CarDotView: MAAnnotationView {
             ready = true
             frame = CGRect(x: 0, y: 0, width: Self.side, height: Self.side)
             backgroundColor = .clear
+            // 光晕会扩到 frame 外面去（见上面 side 的注释）：显式关掉裁切，
+            // 免得哪天 SDK 换了默认值就把呼吸裁成一圈方边。
+            clipsToBounds = false
             layer.addSublayer(halo)
             layer.addSublayer(ring)
             layer.addSublayer(core)
 
-            // ⚠️ 每一层都必须把 **bounds / position** 设对，再按自己的 bounds 画 path。
+            // ⚠️ 每一层都必须把 **bounds** 设对，再按自己的 bounds 画 path。
             // CAShapeLayer 的 bounds 和 position 默认都是 0 —— 那样 `transform.scale`
             // 会绕着**父层左上角**缩放，肉眼看到的就是「光晕在旁边呼吸、没对准圆心」
             //（用户 2026-09-24 实测反馈的就是这个）。
-            // 设好 bounds（圆的外接矩形）+ position（视图中心），缩放才绕自己的圆心。
+            // 设好 bounds（圆的外接矩形），缩放才绕自己的圆心；位置交给 `layoutDots()`。
             func setup(_ l: CAShapeLayer, radius: CGFloat, fill: UIColor) {
                 l.bounds = CGRect(x: 0, y: 0, width: radius * 2, height: radius * 2)
-                l.position = CGPoint(x: Self.side / 2, y: Self.side / 2)
                 l.path = UIBezierPath(ovalIn: l.bounds).cgPath
                 l.fillColor = fill.cgColor
             }
@@ -271,28 +276,75 @@ final class CarDotView: MAAnnotationView {
             setup(ring, radius: Self.ringRadius, fill: .white)
             setup(core, radius: Self.coreRadius, fill: .clear)
 
-            // 呼吸：光晕一边放大一边淡出，无限循环
-            let scale = CABasicAnimation(keyPath: "transform.scale")
-            scale.fromValue = 0.55
-            scale.toValue = 1.15
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 0.75
-            fade.toValue = 0.0
-            let g = CAAnimationGroup()
-            g.animations = [scale, fade]
-            g.duration = 1.8
-            g.repeatCount = .infinity
-            g.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            halo.add(g, forKey: "breathe")
+            // App 从后台回来时，Core Animation 会把层上的动画丢掉（呼吸就这么
+            // 悄无声息地停了）—— 收到"回到前台"通知补一次。
+            _ = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil, queue: .main) { [weak self] _ in
+                self?.startBreathing()
+            }
         }
+        layoutDots()
         setOnline(online)
+        startBreathing()
+    }
+
+    /// 把三层摆到视图正中心。
+    /// ⚠️ 别写死 `Self.side / 2`：视图的 frame 是高德管的，它要是改了尺寸，
+    /// 写死的圆心就会偏离真实车点 —— 所以按**当前 bounds** 现算。
+    private func layoutDots() {
+        guard ready else { return }
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        halo.position = c
+        ring.position = c
+        core.position = c
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutDots()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // 视图离开再挂回渲染树时（高德回收标注视图、App 切前后台）动画会被丢掉，补回来
+        if window != nil { startBreathing() }
+    }
+
+    /// 启动呼吸：光晕从紧贴白圈的位置向外扩散、同时淡出，无限循环（苹果「查找」那种脉冲）。
+    ///
+    /// ⚠️ 2026-09-24 这版之前是 `scale 0.55→1.15` + `fade 0.75→0` + 填充色 `0.30`，
+    ///    而光晕画在实心圆**下面**：半径 8.25~17.25 里小于白圈（11.5）的那段**整段被盖住**，
+    ///    露出白圈之后 `easeOut` 已经把透明度吃到 ~8% ⇒ **肉眼等于没有**
+    ///    （用户报的「只有一个绿色实心点、看不见呼吸」就是这个，不是没画）。
+    ///    现在：起点就从白圈外沿冒出来（0.8×15=12），一路扩到 1.7×15=25.5，
+    ///    填充提到 `0.50` ⇒ 一眼能看见。
+    /// 幂等：同一个 key 重复 add 是**替换**，不会叠加速度、也不会越转越快。
+    private func startBreathing() {
+        guard ready else { return }
+
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 0.8
+        scale.toValue = 1.7
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.9
+        fade.toValue = 0.0
+
+        let g = CAAnimationGroup()
+        g.animations = [scale, fade]
+        g.duration = 1.8
+        g.repeatCount = .infinity
+        g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        halo.add(g, forKey: Self.breatheKey)
     }
 
     /// 绿 = 在线（能取到当前位置）、灰 = 不在线
     func setOnline(_ online: Bool) {
         let base: UIColor = online ? .systemGreen : .systemGray
         core.fillColor = base.cgColor
-        halo.fillColor = base.withAlphaComponent(0.30).cgColor
+        // 光晕填充的透明度：0.30 那版叠加下面 fade 之后实际只剩 ~8%，肉眼看不见；
+        // 0.50 才能在白圈外形成一圈看得见的绿晕（配 fade.fromValue = 0.9 ⇒ 峰值 ~0.45）。
+        halo.fillColor = base.withAlphaComponent(0.50).cgColor
     }
 }
 
