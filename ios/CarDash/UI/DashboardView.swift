@@ -37,42 +37,16 @@ struct DashboardView: View {
 
     var body: some View {
         ZStack {
-            // ── 背景：导航地图 ──
+            // ── 背景：非导航地图（**始终挂载**）──
             if let reason = model.mapUnavailableReason {
                 MapPlaceholder(reason: reason)
                     .ignoresSafeArea()
-            } else if let dest = model.routeDest, amapAgreed {
-                // 车机报了目的地：整屏交给高德官方导航视图。
-                // 原版路线、3D 车标、红绿灯倒计时、电子眼，全是 SDK 自带。
-                //
-                // ⚠️ 试过「没目的地时也用这个 view 靠巡航模式跟车」—— **不行**，
-                // 官方文档写明巡航只给数据、视图不跟车（实测停在默认位置＝北京）。
-                // 所以没目的地时回下面那套 MAMapView，但那边已经调成和这里同一套观感
-                // （`.naviNight` 底图 + 高德官方车标 + 同一组锚点）。
-                ZStack {
-                    // 导航真正开始之前，导航视图显示的是 SDK 默认位置（**北京**）——
-                    // 用户实测"会闪一下北京"。所以先垫一张**非导航地图**顶着
-                    //（它位置和车标都是对的），`didStartNavi` 一来就把它撤掉。
-                    if !navStarted {
-                        DashboardMapView(coord: model.coord,
-                                         heading: model.heading,
-                                         dest: model.routeDest,
-                                         amapAgreed: amapAgreed,
-                                         useRasterFallback: useAmapTiles,
-                                         zoom: zoom,
-                                         speed: model.displaySpeed)
-                    }
-
-                    NaviKitNavView(from: model.coord, to: dest,
-                                   simulate: model.isSimulating,
-                                   onCrossImage: { crossImage = $0 },
-                                   onStarted: { navStarted = true })
-                        .opacity(navStarted ? 1 : 0)
-                }
-                .ignoresSafeArea()
             } else {
-                // 兜底：用户没同意高德 SDK 的隐私协议时，只能用栅格/苹果地图。
-                // 这时候样式和导航态对不上是没办法的事（SDK 不允许未同意就创建地图）。
+                // 非导航地图一直垫在最底下。进导航、退出导航都**不重建**它 ——
+                // 之前是「退出导航 → routeDest 变 nil → 切到另一支 → MAMapView 重建」，
+                // 重建有初始化空档，表现出来就是用户说的「点退出导航车标先跳回定位点、
+                // 卡一下才出现绿标」。始终挂载后，退出导航只是把上面的导航视图撤掉，
+                // 底下的地图和绿标本来就在，没有断层。
                 DashboardMapView(coord: model.coord,
                                  heading: model.heading,
                                  dest: model.routeDest,
@@ -81,6 +55,18 @@ struct DashboardView: View {
                                  zoom: zoom,
                                  speed: model.displaySpeed)
                     .ignoresSafeArea()
+
+                // 车机报了目的地：高德官方导航视图盖在上面。
+                // didStartNavi 之前保持透明，露出底下的地图 —— 挡住 SDK 默认位置
+                //（北京）那一帧（用户实测"会闪一下北京"）。
+                if let dest = model.routeDest, amapAgreed {
+                    NaviKitNavView(from: model.coord, to: dest,
+                                   simulate: model.isSimulating,
+                                   onCrossImage: { crossImage = $0 },
+                                   onStarted: { navStarted = true })
+                        .opacity(navStarted ? 1 : 0)
+                        .ignoresSafeArea()
+                }
             }
 
             GeometryReader { geo in

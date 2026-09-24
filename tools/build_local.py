@@ -83,6 +83,10 @@ def run(title, cmd, allow_fail=False, tail=8):
 def main():
     global FAILED
 
+    # 模拟器版：去掉 sharedUserId（android.uid.system）+ 改用调试签名，
+    # 这样普通模拟器（MuMu 等）才能装进去。车机版**不要**带这个标志。
+    emu = '--emu' in sys.argv
+
     jdk = find_jdk(ENV)
     if not jdk:
         raise SystemExit('在 %s 下找不到 JDK' % ENV)
@@ -190,7 +194,7 @@ def main():
         cmd.append(sys.argv[3])
         if len(sys.argv) > 4 and sys.argv[4].strip():
             cmd.append(sys.argv[4])
-    if '--no-shared-uid' in sys.argv:
+    if '--no-shared-uid' in sys.argv or emu:
         cmd.append('--no-shared-uid')
     ok, _ = run('改写清单并注入 dex', cmd, tail=None)
     if FAILED:
@@ -206,15 +210,38 @@ def main():
     # ── 5. 签名
     out_apk = os.path.join(dist, 'Deepal-CarDash.apk')
     apksigner = os.path.join(bt, 'lib', 'apksigner.jar')
-    ok, _ = run('apksigner 签名', [java, '-jar', apksigner, 'sign',
-                                   '--key', pk8, '--cert', pem,
-                                   '--min-sdk-version', '30',
-                                   '--v1-signing-enabled', 'true',
-                                   '--v2-signing-enabled', 'true',
-                                   '--v3-signing-enabled', 'true',
-                                   '--out', out_apk, aligned])
-    if FAILED:
-        return
+    if emu:
+        # 模拟器用调试密钥（普通 key）。第一次跑会自动生成一个。
+        ks = os.path.join(ENV, 'emu-debug.jks')
+        if not os.path.isfile(ks):
+            keytool = os.path.join(jdk, 'bin', 'keytool.exe' if os.name == 'nt' else 'keytool')
+            ok, _ = run('生成模拟器调试密钥', [keytool, '-genkeypair', '-v',
+                         '-keystore', ks, '-alias', 'emu',
+                         '-storepass', 'android', '-keypass', 'android',
+                         '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000',
+                         '-dname', 'CN=Emu Debug,O=CarDash,C=US'], tail=None)
+            if FAILED:
+                return
+        ok, _ = run('apksigner 签名（模拟器调试密钥）', [java, '-jar', apksigner, 'sign',
+                       '--ks', ks, '--ks-key-alias', 'emu',
+                       '--ks-pass', 'pass:android', '--key-pass', 'pass:android',
+                       '--min-sdk-version', '30',
+                       '--v1-signing-enabled', 'true',
+                       '--v2-signing-enabled', 'true',
+                       '--v3-signing-enabled', 'true',
+                       '--out', out_apk, aligned])
+        if FAILED:
+            return
+    else:
+        ok, _ = run('apksigner 签名', [java, '-jar', apksigner, 'sign',
+                                       '--key', pk8, '--cert', pem,
+                                       '--min-sdk-version', '30',
+                                       '--v1-signing-enabled', 'true',
+                                       '--v2-signing-enabled', 'true',
+                                       '--v3-signing-enabled', 'true',
+                                       '--out', out_apk, aligned])
+        if FAILED:
+            return
 
     # ── 5b. 用系统同款解析器校验清单（aapt2 的 ResXMLTree 与框架一致）
     aapt2 = os.path.join(bt, 'aapt2.exe' if os.name == 'nt' else 'aapt2')
@@ -235,10 +262,13 @@ def main():
     if m:
         got = m.group(1)
         say('   证书 SHA-256 = %s' % got)
-        if got != EXPECTED_CERT_SHA256:
+        if emu:
+            say('   模拟器包（--emu：已去 sharedUserId + 调试签名），不校验车机系统签名')
+        elif got != EXPECTED_CERT_SHA256:
             say('!!! 证书与车机系统签名不一致，安装会失败')
             sys.exit(1)
-        say('   ✅ 与车机系统签名一致')
+        else:
+            say('   ✅ 与车机系统签名一致')
     else:
         say('!!! 没能读出证书指纹')
         sys.exit(1)

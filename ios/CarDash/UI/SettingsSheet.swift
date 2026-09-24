@@ -79,11 +79,13 @@ struct SettingsSheet: View {
                     Button("清除模拟路线", role: .destructive) {
                         model.clearMockDestination()
                     }
+                    Toggle("模拟双闪（两边绿光）", isOn: $model.mockHazard)
                 } header: {
                     Text("测试（正式版会移除）")
                 } footer: {
                     Text("在当前位置东北方向约 3 公里放一个假目的地，"
-                         + "看路线画出来什么样。点「清除」恢复车机真实数据。")
+                         + "看路线画出来什么样。点「清除」恢复车机真实数据。\n"
+                         + "「模拟双闪」没连车机也能预览转向灯绿光闪烁效果。")
                 }
 
                 Section {

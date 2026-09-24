@@ -45,6 +45,10 @@ final class DashboardModel: ObservableObject {
     /// 没连车机时这三格是空的，用户就看不出来排版对不对 —— 所以模拟时自己填一份。
     @Published private(set) var mockNav: NavState?
 
+    /// 「模拟双闪」开关（用户 2026-09-24 要求：没车时先预览两边绿光效果）。
+    /// 开 = 强制当双闪（turn=3），优先级高于车机真实值。看 `displayTurn`。
+    @Published var mockHazard = false
+
     /// 现在是「模拟导航」测试模式吗（点了设置里那条「模拟一条导航路线」）。
     /// 真导航用 SDK 的实时导航（startGPSNavi），模拟模式用官方**模拟导航**
     /// （startEmulatorNavi，沿路线自动跑一遍，能看路况和电子眼）—— 见 NaviKitNavView。
@@ -425,8 +429,10 @@ final class DashboardModel: ObservableObject {
     }
 
     /// 转向灯：0=灭 1=左 2=右 3=双闪。nil = 车机没这个数据（旧版车机 APK）。
+    /// 模拟双闪开关打开时强制返回 3（两边一起闪，预览效果用）。
     var displayTurn: Int? {
-        carFresh ? car?.turn : nil
+        if mockHazard { return 3 }
+        return carFresh ? car?.turn : nil
     }
 
     /// 当前路段限速（车机高德广播给的）。0/缺省都当"不知道"。
