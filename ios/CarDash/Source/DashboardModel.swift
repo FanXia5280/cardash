@@ -633,15 +633,22 @@ final class DashboardModel: ObservableObject {
     /// 一旦换了目的地、车机导航结束或车机失联，记号自动作废，
     /// 下一次导航照常跟上。
     func endNavigation() {
-        if isSimulating {
-            clearMockDestination()
-            return
-        }
-        suppressedDestKey = car?.dest?.routeKey
+        // ⚠️ 模拟模式下**不能**只走 clearMockDestination —— 它只清 mock，
+        // routeDest 要等 beginRouteStopIfNeeded 的 20 秒去抖才被清掉，
+        // 用户点「退出导航」后导航视图会赖在那儿二十秒才跳回绿点
+        //（用户实测「还是会卡一下」，就是这个）。
+        // 所以两种模式都**立刻**收路线。
         navOffSince = nil
         stopPending = false
         routeDest = nil
         routedKey = nil
+        if isSimulating {
+            mockDest = nil
+            mockNav = nil
+        } else {
+            // 真导航：记住这条目的地，车机继续推它时不再算回来
+            suppressedDestKey = car?.dest?.routeKey
+        }
     }
 
     /// 拿到目的地的 WGS-84 坐标：有坐标先转坐标系，只有名字就地理编码。

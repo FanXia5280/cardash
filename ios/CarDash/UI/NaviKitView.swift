@@ -177,16 +177,31 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
 
     /// 视图被拆掉时调用：停引擎 + 摘掉注册进单例的回调，别在后台空转。
     func shutdown() {
-        if let m = manager {
-            if startedMode != nil { m.stopNavi() }
-            if let v = view { m.removeDataRepresentative(v) }
-            m.removeDataRepresentative(self)
+        guard let m = manager else {
+            startedMode = nil
+            plannedDest = nil
+            plannedSimulate = nil
+            view = nil
+            return
         }
+        let v = view
+        let wasRunning = startedMode != nil
+        manager = nil
+        view = nil
         startedMode = nil
         plannedDest = nil
         plannedSimulate = nil
-        manager = nil
-        view = nil
+
+        // 摘回调是轻量操作，立刻做 —— 免得单例继续给已销毁的 view 推数据
+        if let v { m.removeDataRepresentative(v) }
+        m.removeDataRepresentative(self)
+
+        // stopNavi 有同步开销，推到下一个 runloop 再跑：
+        // 它是在 SwiftUI 拆视图的同一帧里被调用的，同步跑会卡住那一帧
+        //（用户实测「点退出导航卡一下」的来源之一）。
+        if wasRunning {
+            DispatchQueue.main.async { m.stopNavi() }
+        }
     }
 
     /// 自车图标位置：按当前屏幕方向设置。
