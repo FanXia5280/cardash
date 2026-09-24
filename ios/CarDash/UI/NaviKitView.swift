@@ -127,6 +127,15 @@ struct NaviKitNavView: UIViewRepresentable {
 
     func makeCoordinator() -> NaviCoordinator { NaviCoordinator() }
 
+    /// 导航视图被拆掉（退出导航按钮 / 目的地消失）⇒ 把引擎一起收干净。
+    ///
+    /// 不做的话 `AMapNaviDriveManager` 单例还在后台跑 GPS 导航（费电），
+    /// 而且旧的 view/representative 会一直挂在它身上越积越多。
+    /// 下一次导航自然会用新 coordinator 重新注册、重新算路。
+    static func dismantleUIView(_ uiView: AMapNaviDriveView, coordinator: NaviCoordinator) {
+        coordinator.shutdown()
+    }
+
     /// 提前把导航引擎点着。
     ///
     /// 高德的单例（AMapNaviDriveManager）第一次创建要初始化整套引擎，
@@ -165,6 +174,20 @@ final class NaviCoordinator: NSObject, AMapNaviDriveManagerDelegate,
     private var lastFed: CLLocationCoordinate2D?
 
     func attach(view v: AMapNaviDriveView) { view = v }
+
+    /// 视图被拆掉时调用：停引擎 + 摘掉注册进单例的回调，别在后台空转。
+    func shutdown() {
+        if let m = manager {
+            if startedMode != nil { m.stopNavi() }
+            if let v = view { m.removeDataRepresentative(v) }
+            m.removeDataRepresentative(self)
+        }
+        startedMode = nil
+        plannedDest = nil
+        plannedSimulate = nil
+        manager = nil
+        view = nil
+    }
 
     /// 自车图标位置：按当前屏幕方向设置。
     /// 值取自 `MapAnchor`（**和非导航态共用同一组**，用户要求两边同步）。

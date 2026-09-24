@@ -245,10 +245,11 @@ struct DashboardView: View {
                     .opacity(model.displayNav?.isActive == true ? 1 : 0)
                     .padding(.top, k * 4)
 
-                AltitudePanel(altitude: model.displayAltitude, scale: k)
-                    .frame(height: k * 34, alignment: .center)
-                    .hudCard(k)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                // 横屏右上角：用户要求海拔移除、这里放「退出导航」（仅导航中显示）
+                if model.routeDest != nil {
+                    NavExitButton(scale: k) { model.endNavigation() }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
 
             Spacer(minLength: 8)
@@ -317,6 +318,13 @@ struct DashboardView: View {
 
             // 转向卡已移除，这里只留一个弹性空隙（原来它前后各一个）
             Spacer(minLength: k * 16)
+
+            // ── 退出导航（用户 2026-09-24 要求：竖屏放在车辆总里程上面）──
+            if model.routeDest != nil {
+                NavExitButton(scale: k) { model.endNavigation() }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, k * 6)
+            }
 
             // ── 底栏：竖屏宽度只有一半，两栏并排会溢出，拆两行 ──
             // 比例尺删掉后，总里程挪到它原来的位置（右下角）——
@@ -460,6 +468,36 @@ struct EdgeGlow: View {
         .blur(radius: 5)
         .frame(maxWidth: .infinity, maxHeight: .infinity,
                alignment: isLeft ? .leading : .trailing)
+    }
+}
+
+// MARK: - 退出导航按钮
+
+/// 「退出导航」（用户 2026-09-24 要求加的）。
+///
+/// 竖屏放在车辆总里程上面、横屏放在原海拔的位置（横屏不再显示海拔）。
+/// 只在导航中显示。点了**只结束 iPhone 这边**的导航（见
+/// `DashboardModel.endNavigation`）—— 车机那边照常导，换目的地会自动跟上新路线；
+/// 车机继续推同一条目的地时不会把路线算回来。
+struct NavExitButton: View {
+    let scale: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: scale * 6) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: scale * 14, weight: .semibold))
+                Text("退出导航")
+                    .font(.system(size: scale * 13, weight: .semibold))
+            }
+            .foregroundStyle(.white.opacity(0.92))
+            .frame(height: scale * 32)
+            .padding(.horizontal, scale * 14)
+            .background(Capsule().fill(Color.black.opacity(0.55)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 

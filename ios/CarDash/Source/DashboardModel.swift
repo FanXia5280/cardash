@@ -33,6 +33,11 @@ final class DashboardModel: ObservableObject {
     private var navOffSince: Date?
     /// 这一轮"收路线"已经执行过了，别每 250ms 重复触发
     private var stopPending = false
+    /// 用户按「退出导航」时按掉的那条目的地 key。
+    /// 车机还在导航、还在广播同一条目的地 —— 不记这个的话下一次 poll
+    /// 立刻把同一条路线算回来，按钮等于没用。
+    /// 换了目的地 / 车机导航结束 / 车机失联，都自动作废。
+    private var suppressedDestKey: String?
     /// 测试用：手动塞的假目的地。正式版可以连这块一起删掉。
     @Published private(set) var mockDest: Dest?
     /// 模拟路线时顺带塞的假导航信息。
@@ -216,6 +221,7 @@ final class DashboardModel: ObservableObject {
         stopPending = false
         routeDest = nil
         routedKey = nil
+        suppressedDestKey = nil
     }
 
     // MARK: - 轮询
@@ -500,6 +506,9 @@ final class DashboardModel: ObservableObject {
         // 测试按钮塞的假目的地优先；没有就用车机的（前提是车机在导航）
         let candidate = mockDest ?? (navOn ? car?.dest : nil)
         guard let dest = candidate, dest.isUsable else {
+            // 车机导航结束了（或目的地没了）⇒ 「退出导航」的记号作废，
+            // 不然下一次导航到同一个地方会被它拦住
+            suppressedDestKey = nil
             // ⚠️ **不要一帧就放手**（2026-09-24 用户要求：中间不中断导航）。
             //
             // 车机侧判断"导航还在不在"靠的是引导广播的新鲜度（60 秒窗口），
@@ -518,7 +527,11 @@ final class DashboardModel: ObservableObject {
 
         let key = dest.routeKey
         guard key != routedKey else { return }
+        // 用户刚按过「退出导航」、车机还在推同一条目的地 ⇒ 不理，别算回来。
+        // 换了目的地（key 不同）自然走到下面，记号随之作废。
+        guard key != suppressedDestKey else { return }
         routedKey = key
+        suppressedDestKey = nil
 
         resolveDestination(dest) { [weak self] to in
             guard let self, let to else { return }
@@ -604,6 +617,25 @@ final class DashboardModel: ObservableObject {
         mockNav = nil
         routedKey = nil
         syncDestination()
+    }
+
+    /// 「退出导航」按钮（用户 2026-09-24 要求：竖屏放总里程上面、横屏放海拔的位置）。
+    ///
+    /// 只结束 **iPhone 这边**的导航：停引擎、收起导航视图。
+    /// 车机那边还在导航、还在广播同一个目的地 —— 所以记住这条目的地 key，
+    /// 车机继续推它就不重算（否则下一次 poll 立刻把路线算回来，按钮白按）；
+    /// 一旦换了目的地、车机导航结束或车机失联，记号自动作废，
+    /// 下一次导航照常跟上。
+    func endNavigation() {
+        if isSimulating {
+            clearMockDestination()
+            return
+        }
+        suppressedDestKey = car?.dest?.routeKey
+        navOffSince = nil
+        stopPending = false
+        routeDest = nil
+        routedKey = nil
     }
 
     /// 拿到目的地的 WGS-84 坐标：有坐标先转坐标系，只有名字就地理编码。

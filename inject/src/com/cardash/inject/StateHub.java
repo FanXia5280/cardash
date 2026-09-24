@@ -220,8 +220,10 @@ public final class StateHub {
         //    完全另一个地方，那正是"目的地被改掉"。
         if (DestSignals.usable()) {
             b.append(",\"dest\":{\"name\":").append(Json.esc(DestSignals.destName()))
-             .append(",\"lat\":").append(Json.num(DestSignals.lat()))
-             .append(",\"lon\":").append(Json.num(DestSignals.lon()))
+             // 坐标必须 num6：num 只留 2 位小数 ≈ 1.1 公里误差，
+             // 就是「IPA 终点和车机不一致 + 切目的地不重算」的根因
+             .append(",\"lat\":").append(Json.num6(DestSignals.lat()))
+             .append(",\"lon\":").append(Json.num6(DestSignals.lon()))
              .append(",\"src\":").append(Json.esc(DestSignals.source()))
              .append('}');
         }

@@ -59,18 +59,16 @@ public final class VendorSignals {
     private static final String A_TIRE_FL    = "vc_alias_tire_pressure";
 
     /**
-     * 转向灯。三个候选都读（名字来自 D.apk 的 Aliases 表 ＋ 字符串池里的中文名
-     * 「灯光 / 转向灯状态」），哪个有值用哪个：
-     *   Light/TurnLightStatus = 合并状态（中文名就是「转向灯状态」，最可能）
-     *   Light/TurnLeft/Right  = 左右分开（含义无歧义，用来兜底、也用来交叉验证）
+     * 转向灯。⚠️ 2026-09-24 实车校准（用户三次导航日志）：真正在推的别名是
+     * vc_alias_turn_left_signal_on / vc_alias_turn_right_signal_on（值 1/0，
+     * 双闪 = 两个同时为 1）。
      *
-     * ⚠️ 写这段时车不在手边，**取值形态没在真车上验证过**（可能是 0/1/2/3 枚举，
-     * 也可能是布尔）。所以三个都读、原始值都记进诊断，归一化写得宽容，
-     * 上车后看一眼 iPhone 设置页的 `turnRaw` 就能校准。
+     * 最早照 D.apk 的 Aliases 表猜的 Light/TurnLeft / Light/TurnLightStatus
+     * **车机根本不推** —— 所以转向灯/双闪一直没数据（/state 里 turn 恒为 null、
+     * iPhone 两边不冒绿光）。别改回去。
      */
-    private static final String A_TURN       = "Light/TurnLightStatus";
-    private static final String A_TURN_L     = "Light/TurnLeft";
-    private static final String A_TURN_R     = "Light/TurnRight";
+    private static final String A_TURN_L     = "vc_alias_turn_left_signal_on";
+    private static final String A_TURN_R     = "vc_alias_turn_right_signal_on";
 
     /**
      * 续航候选别名，按优先级从高到低。
@@ -106,7 +104,7 @@ public final class VendorSignals {
     private static final String[] PROBE = {
             A_SPEED, A_GEAR, "vc_alias_journey_all_distance",
             A_RANGE, "vc_alias_disp_dte", "vc_alias_e_dte", A_DRIVE,
-            A_TURN, A_TURN_L, A_TURN_R,
+            A_TURN_L, A_TURN_R,
     };
 
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:\\.\\d+)?");
@@ -692,7 +690,7 @@ public final class VendorSignals {
             hub.setSource("gear", "vendor:" + alias);
             return true;
         }
-        if (A_TURN.equals(alias) || A_TURN_L.equals(alias) || A_TURN_R.equals(alias)) {
+        if (A_TURN_L.equals(alias) || A_TURN_R.equals(alias)) {
             return applyTurn(hub, alias, raw);
         }
         return false;
