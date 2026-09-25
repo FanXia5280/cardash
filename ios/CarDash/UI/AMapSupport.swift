@@ -20,10 +20,12 @@ enum AMapConfig {
     /// iOS 平台 Key —— 地图渲染用
     static let iOSKey = "ae986c05ca592da903ea68d0778c54b9"
 
-    /// Web 服务 Key —— 路径规划用。
-    /// 高德把「地图渲染」和「数据服务」拆成不同平台的 Key，
-    /// iOS 平台的 Key 拿去调算路接口是过不了的，必须分开用。
-    static let webKey = "14f2efc030e5992fe6c030b6277d6912"
+    // ⚠️ 这里原来还有一个 `webKey`（Web 服务 Key，给"自绘路线"用高德 Web 算路接口的）。
+    //    2026-09-24 自绘路线整块删掉之后它就**没有任何调用点**了，2026-09-25 一并删掉。
+    //    想再加"Web 算路"的话：去高德控制台**新建**一个 Web 服务 Key（别复用旧的），
+    //    并且给它配 IP 白名单 —— **仓库是公开的**（2026-09-25 为绕开 Actions 计费转的），
+    //    写死在源码里的 Key 等于公开，务必只放能靠绑定/白名单兜住的 Key。
+    //    iOS 侧的 `iOSKey` 必须绑定 Bundle ID（com.cardash.dashboard），见下面的注释。
 
     /// 用户有没有看过隐私说明。首次启动弹一次。
     static var privacyAsked: Bool {
