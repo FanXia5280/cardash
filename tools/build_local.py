@@ -154,11 +154,13 @@ def main():
 
     # ── 1. javac
     srcs = []
-    for base, _, files in os.walk(os.path.join(ROOT, 'inject', 'src')):
-        for f in files:
-            if f.endswith('.java'):
-                srcs.append(os.path.join(base, f))
-    say('\n源文件 %d 个' % len(srcs))
+    # inject = 桥接本体；lantern = 内置的氛围灯（MagicLantern，已去掉 res 依赖）
+    for tree in (('inject', 'src'), ('lantern', 'src')):
+        for base, _, files in os.walk(os.path.join(ROOT, *tree)):
+            for f in files:
+                if f.endswith('.java'):
+                    srcs.append(os.path.join(base, f))
+    say('\n源文件 %d 个（桥接 + 内置氛围灯）' % len(srcs))
 
     ok, _ = run('javac 编译', [javac, '--release', '11', '-encoding', 'UTF-8',
                               '-classpath', ajar, '-d', os.path.join(build, 'classes')] + srcs)

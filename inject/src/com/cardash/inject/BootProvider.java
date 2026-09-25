@@ -46,6 +46,14 @@ public class BootProvider extends ContentProvider {
             Diagnostics.log("BridgeRuntime.start 抛异常: " + t);
         }
 
+        // 氛围灯：跟随桌面进程保活 + 在「桌面设置」里挂入口。
+        // 整段包在 try 里 —— 氛围灯出任何问题都不允许影响原车功能。
+        try {
+            LanternEntry.install(ctx);
+        } catch (Throwable t) {
+            Diagnostics.log("氛围灯初始化失败: " + t);
+        }
+
         return true;
     }
 

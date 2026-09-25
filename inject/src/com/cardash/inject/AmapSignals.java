@@ -166,6 +166,24 @@ public final class AmapSignals {
      */
     private static final long FAST_END_MS = 15000L;
 
+    /**
+     * "快判"窗口（2026-09-25 晚加，用户实测"退出导航还要等十多秒"）。
+     *
+     * <p>单独看 4 秒很激进，但它**必须和"驾驶模式=空闲"同时成立**才生效：
+     * <ul>
+     *   <li>导航中 EXTRA_STATE 只在 8(导航中)/9/24/25(巡航) 之间跳；40、19、2001 这些
+     *       空闲值只在**停车或退出导航之后**出现；</li>
+     *   <li>正常导航里引导广播是 2 条/秒（实测），连停 4 秒本身就极不正常。</li>
+     * </ul>
+     * 两个条件同时成立的现实场景基本只有"用户点了退出导航" ⇒ 延迟从 15 秒降到 ~4-5 秒。
+     * 兜底仍是 {@link #FAST_END_MS}：万一模式一直停在上次的值，也不会漏判。
+     */
+    private static final long QUICK_END_MS = 4000L;
+
+    /** 最近一次收到的驾驶模式原始值 / 时刻（"快判"用：判断是不是已经切到空闲） */
+    private static volatile int lastStateValue = -1;
+    private static volatile long lastStateAt;
+
     /** {@link #navigating()} 连续不成立是从什么时候开始的（0 = 现在还成立） */
     private static volatile long notNavigatingSince;
 
@@ -206,8 +224,28 @@ public final class AmapSignals {
         //    日志被刷满还容易误判（用户上一轮抓的日志里就是这样）。
         if (live == 0) return;
         long age = System.currentTimeMillis() - live;
-        if (age < FAST_END_MS) return;      // 还在导航（实测最长断流 12 秒）
+        // ① 快判：高德已经明确切到"空闲"，且引导广播停了 4 秒 ⇒ 判定结束。
+        //   （用户点退出导航的典型场景：模式立刻变空闲，引导广播随即停发。）
+        if (age >= QUICK_END_MS && stateLooksIdle()) {
+            endSession(age);
+            return;
+        }
+        // ② 兜底：老规矩，模式不明确时仍等 15 秒（实测最长断流 12 秒）
+        if (age < FAST_END_MS) return;
         endSession(age);
+    }
+
+    /**
+     * 最近收到的驾驶模式像不像"不在导航"（空闲/退出）。
+     *
+     * <p>8 = 导航中，9/24/25 = 巡航中，都不算；30 秒内没收到状态也不算
+     *（宁可走 15 秒的慢判，也不拿过期状态去猜）。
+     */
+    private static boolean stateLooksIdle() {
+        long at = lastStateAt;
+        if (at == 0 || System.currentTimeMillis() - at > 30000L) return false;
+        int v = lastStateValue;
+        return v != -1 && v != 8 && v != 9 && v != 24 && v != 25;
     }
 
     /**
@@ -378,6 +416,9 @@ public final class AmapSignals {
 
     private static void onState(Intent i) {
         int st = i.getIntExtra("EXTRA_STATE", -1);
+        // 记一下原始值：退出导航的"快判"要用它（见 QUICK_END_MS）
+        lastStateValue = st;
+        lastStateAt = System.currentTimeMillis();
         int m = (st == 8) ? 1 : ((st == 9 || st == 24 || st == 25) ? 2 : 0);
         if (m == mode) return;
         mode = m;

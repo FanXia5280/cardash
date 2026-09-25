@@ -61,7 +61,6 @@ struct DashboardView: View {
                 //（北京）那一帧（用户实测"会闪一下北京"）。
                 if let dest = model.routeDest, amapAgreed {
                     NaviKitNavView(from: model.coord, to: dest,
-                                   simulate: model.isSimulating,
                                    onCrossImage: { crossImage = $0 },
                                    onStarted: { navStarted = true })
                         .opacity(navStarted ? 1 : 0)

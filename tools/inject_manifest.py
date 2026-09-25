@@ -44,6 +44,11 @@ A11Y_METADATA = 'android.accessibilityservice'
 #   通知        —— API 33 起才需要 POST_NOTIFICATIONS
 #   前台服务    —— API 34 起才需要 FOREGROUND_SERVICE_* 权限
 # 真要让桥接在 Android 13+ 上跑，应该改 D.apk 的自检逻辑，而不是硬塞权限。
+# ⚠️ 曾经为「卡片里嵌任意 App」放开过三条签名权限（CAPTURE_VIDEO_OUTPUT /
+# INTERNAL_SYSTEM_WINDOW / INJECT_EVENTS）；2026-09-25 晚用户决定不做那个功能了
+# ⇒ **收回到空**。理由：多声明权限没有任何好处，只有风险
+# （D.apk 启动时会自检权限，缺权限就弹「一键授权」向导）。
+# 以后真要再做虚拟显示那套，按下面这个模板加回来即可（记得说明为什么是签名权限）。
 EXTRA_PERMISSIONS = []
 
 # 模拟器版（--no-shared-uid / --emu）额外要补的权限：

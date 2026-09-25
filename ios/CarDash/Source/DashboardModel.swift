@@ -38,25 +38,6 @@ final class DashboardModel: ObservableObject {
     /// 立刻把同一条路线算回来，按钮等于没用。
     /// 换了目的地 / 车机导航结束 / 车机失联，都自动作废。
     private var suppressedDestKey: String?
-    /// 测试用：手动塞的假目的地。正式版可以连这块一起删掉。
-    @Published private(set) var mockDest: Dest?
-    /// 模拟路线时顺带塞的假导航信息。
-    /// 连车机时「还有多久 / 多远 / 几点到」由车机的高德广播给；
-    /// 没连车机时这三格是空的，用户就看不出来排版对不对 —— 所以模拟时自己填一份。
-    @Published private(set) var mockNav: NavState?
-
-    /// 「模拟转向灯」：0 = 关（用真实值）、1 = 左转、2 = 右转、3 = 双闪。
-    /// 用户 2026-09-24 要求：没车时先预览两边绿光效果（左/右/双闪都要能试）。看 `displayTurn`。
-    @Published var mockTurn = 0
-
-    /// 「模拟超速」开关：没车/没电子眼数据时也能预览两边红光。
-    /// 看 `isOverspeed` —— 打开就直接当作超速。
-    @Published var mockOverspeed = false
-
-    /// 现在是「模拟导航」测试模式吗（点了设置里那条「模拟一条导航路线」）。
-    /// 真导航用 SDK 的实时导航（startGPSNavi），模拟模式用官方**模拟导航**
-    /// （startEmulatorNavi，沿路线自动跑一遍，能看路况和电子眼）—— 见 NaviKitNavView。
-    var isSimulating: Bool { mockDest != nil }
 
     // MARK: - 设置
     @Published var host: String {
@@ -265,7 +246,7 @@ final class DashboardModel: ObservableObject {
 
     private func watchdogTick() {
         // 车机失联太久 ⇒ 收掉导航（理由见 dropRouteBecauseCarGone）
-        if mockDest == nil, routeDest != nil,
+        if routeDest != nil,
            Date().timeIntervalSince(lastSuccess) > 150 {
             dropRouteBecauseCarGone()
         }
@@ -493,10 +474,8 @@ final class DashboardModel: ObservableObject {
     }
 
     /// 转向灯：0=灭 1=左 2=右 3=双闪。nil = 车机没这个数据（旧版车机 APK）。
-    /// 模拟转向灯选了方向时优先返回它（预览效果用）。
     var displayTurn: Int? {
-        if mockTurn > 0 { return mockTurn }
-        return carFresh ? car?.turn : nil
+        carFresh ? car?.turn : nil
     }
 
     /// 当前路段限速（车机高德广播给的）。0/缺省都当"不知道"。
@@ -525,8 +504,6 @@ final class DashboardModel: ObservableObject {
     /// 这个判断**自己算**，不用高德 SDK 的 `showOverSpeedPulse`（那是收费接口，
     /// 用户已明确只用官方免费功能）。
     var isOverspeed: Bool {
-        // 模拟超速：没车也能看红光效果（见设置里的开关）
-        if mockOverspeed { return true }
         guard let s = displaySpeed, s.isFinite else { return false }
         guard let cam = displayCamera, let d = cam.dist, d >= 0, d <= 300 else { return false }
 
@@ -549,7 +526,6 @@ final class DashboardModel: ObservableObject {
     }
 
     var displayNav: NavState? {
-        if let m = mockNav { return m }        // 模拟路线优先（给用户试排版用）
         // 用户按过「退出导航」、而车机还在推同一条目的地 ⇒ **顶栏摘要也一起收掉**。
         //
         // ⚠️ 2026-09-25 修（用户实测截图：地图已经回普通地图了，顶栏还挂着
@@ -583,8 +559,7 @@ final class DashboardModel: ObservableObject {
         // 车机那边的 dest 有新鲜度窗口，导航早就结束了它还在，
         // 结果仪表上长期挂着一条不存在的路线（用户说「IPA 会自己改目的地」）。
         let navOn = car?.nav?.isActive == true
-        // 测试按钮塞的假目的地优先；没有就用车机的（前提是车机在导航）
-        let candidate = mockDest ?? (navOn ? car?.dest : nil)
+        let candidate: Dest? = navOn ? car?.dest : nil
         guard let dest = candidate, dest.isUsable else {
             // 车机导航结束了（或目的地没了）⇒ 「退出导航」的记号作废，
             // 不然下一次导航到同一个地方会被它拦住
@@ -668,41 +643,6 @@ final class DashboardModel: ObservableObject {
         return ((atan2(y, x) * 180 / .pi) + 360).truncatingRemainder(dividingBy: 360)
     }
 
-    // MARK: - 测试：模拟车机报目的地
-
-    /// 在当前位置东北方向约 3 公里放一个假目的地。
-    /// 坐标要生成成 **GCJ-02** —— 车机报上来的就是火星坐标，
-    /// resolveDestination 会按 GCJ-02 转回 WGS-84，得保持一致。
-    func sendMockDestination() {
-        guard let c = coord else { return }
-        let g = ChinaCoord.toGcj(c)
-        let dLat = 3.0 / 111.0
-        let dLon = 3.0 / (111.0 * cos(c.latitude * .pi / 180))
-        mockDest = Dest(name: "测试目的地",
-                        lat: g.latitude + dLat,
-                        lon: g.longitude + dLon)
-        // 连车机时这些字段由车机的高德广播给；测试排版时得自己填，
-        // 否则顶栏中间那块（还有多久 / 多远 / 几点到）是空的，没法看位置对不对。
-        mockNav = NavState(active: true,
-                           title: nil,
-                           subtitle: nil,
-                           distance: nil,
-                           after: nil,
-                           eta: "42 分钟",
-                           remain: "21.9 公里",
-                           turn: "straight",
-                           arrive: "预计 19:30 到达")
-        routedKey = nil
-        syncDestination()
-    }
-
-    func clearMockDestination() {
-        mockDest = nil
-        mockNav = nil
-        routedKey = nil
-        syncDestination()
-    }
-
     /// 「退出导航」按钮（用户 2026-09-24 要求：竖屏放总里程上面、横屏放海拔的位置）。
     ///
     /// 只结束 **iPhone 这边**的导航：停引擎、收起导航视图。
@@ -711,22 +651,15 @@ final class DashboardModel: ObservableObject {
     /// 一旦换了目的地、车机导航结束或车机失联，记号自动作废，
     /// 下一次导航照常跟上。
     func endNavigation() {
-        // ⚠️ 模拟模式下**不能**只走 clearMockDestination —— 它只清 mock，
-        // routeDest 要等 beginRouteStopIfNeeded 的 20 秒去抖才被清掉，
-        // 用户点「退出导航」后导航视图会赖在那儿二十秒才跳回绿点
+        // ⚠️ 立刻收路线，不能等 beginRouteStopIfNeeded 那 10 秒去抖 ——
+        // 否则用户点完「退出导航」，导航视图还要赖十几秒才跳回绿点
         //（用户实测「还是会卡一下」，就是这个）。
-        // 所以两种模式都**立刻**收路线。
         navOffSince = nil
         stopPending = false
         routeDest = nil
         routedKey = nil
-        if isSimulating {
-            mockDest = nil
-            mockNav = nil
-        } else {
-            // 真导航：记住这条目的地，车机继续推它时不再算回来
-            suppressedDestKey = car?.dest?.routeKey
-        }
+        // 记住这条目的地：车机还在导航、还在推它 ⇒ 不再算回来（否则按钮白按）
+        suppressedDestKey = car?.dest?.routeKey
     }
 
     /// 拿到目的地的 WGS-84 坐标：有坐标先转坐标系，只有名字就地理编码。

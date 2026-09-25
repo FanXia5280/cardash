@@ -77,27 +77,6 @@ struct SettingsSheet: View {
                 }
 
                 Section {
-                    Button("模拟一条导航路线") { model.sendMockDestination() }
-                    Button("清除模拟路线", role: .destructive) {
-                        model.clearMockDestination()
-                    }
-                    Picker("模拟转向灯（绿光）", selection: $model.mockTurn) {
-                        Text("关").tag(0)
-                        Text("左转").tag(1)
-                        Text("右转").tag(2)
-                        Text("双闪").tag(3)
-                    }
-                    Toggle("模拟超速（红光）", isOn: $model.mockOverspeed)
-                } header: {
-                    Text("测试（正式版会移除）")
-                } footer: {
-                    Text("在当前位置东北方向约 3 公里放一个假目的地，"
-                         + "看路线画出来什么样。点「清除」恢复车机真实数据。\n"
-                         + "「模拟转向灯 / 模拟超速」没连车机也能预览两边绿光、红光闪烁效果"
-                         + "（绿=转向灯，红=测速电子眼+超速）。")
-                }
-
-                Section {
                     Toggle("使用高德地图底图", isOn: $useAmapTiles)
                 } header: {
                     Text("地图")
