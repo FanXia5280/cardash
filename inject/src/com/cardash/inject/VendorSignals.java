@@ -72,15 +72,36 @@ public final class VendorSignals {
 
     /**
      * 转向灯。⚠️ 2026-09-24 实车校准（用户三次导航日志）：真正在推的别名是
-     * vc_alias_turn_left_signal_on / vc_alias_turn_right_signal_on（值 1/0，
-     * 双闪 = 两个同时为 1）。
+     * vc_alias_turn_left_signal_on / vc_alias_turn_right_signal_on。
      *
      * 最早照 D.apk 的 Aliases 表猜的 Light/TurnLeft / Light/TurnLightStatus
      * **车机根本不推** —— 所以转向灯/双闪一直没数据（/state 里 turn 恒为 null、
      * iPhone 两边不冒绿光）。别改回去。
+     *
+     * ⚠️⚠️ **真值语义（2026-09-25 实车定案）：0 = 灯亮、1 = 灯灭** ——
+     * 和别名名字的字面意思**相反**，见 {@link #TURN_ACTIVE_VALUE}。
      */
     private static final String A_TURN_L     = "vc_alias_turn_left_signal_on";
     private static final String A_TURN_R     = "vc_alias_turn_right_signal_on";
+
+    /**
+     * 转向灯别名里"这盏灯亮着"对应的原始值。
+     *
+     * <p>⚠️ **0 = 亮、1 = 灭**（不是 1 = 亮！）。证据是用户车上的属性全量扫描
+     * （2026-09-25 日志二）：车上**没有**打转向灯时
+     * <pre>
+     *   vc_alias_turn_left_signal_on  = 1
+     *   vc_alias_turn_right_signal_on = 1
+     * </pre>
+     * 按"1=亮"解释 ⇒ 两个都为真 ⇒ {@code turnValue()} = 3（双闪）
+     * ⇒ iPhone 两边绿光**从连上车机起就一直闪**（用户实测报的就是这个）。
+     * 按 0=亮 解释就对得上：全灭 = 1/1、左亮 = 0/1、右亮 = 1/0、双闪 = 0/0。
+     *
+     * <p>要改回"1=亮"就把这一个常量改成 1 —— **只有这一处**。
+     * 真值语义只能靠真车实测决定，别再照别名名字猜：这个功能已经猜错过两次
+     * （第一次猜 {@code Light/Turn*} 别名名、第二次猜 1=亮）。
+     */
+    private static final int TURN_ACTIVE_VALUE = 0;
 
     /**
      * 续航候选别名，按优先级从高到低。
@@ -742,14 +763,15 @@ public final class VendorSignals {
      */
     private static boolean applyTurn(StateHub hub, String alias, Object raw) {
         hub.setSource("turnRaw", alias + "=" + String.valueOf(raw));
+        recordTurn(alias, raw);
         if (A_TURN_L.equals(alias)) {
-            Boolean b = turnBool(raw);
+            Boolean b = turnActive(raw);
             if (b == null) return false;
             hub.turnLeft = b;
             return true;
         }
         if (A_TURN_R.equals(alias)) {
-            Boolean b = turnBool(raw);
+            Boolean b = turnActive(raw);
             if (b == null) return false;
             hub.turnRight = b;
             return true;
@@ -759,7 +781,7 @@ public final class VendorSignals {
             hub.turnStatus = d.intValue();
             return true;
         }
-        Boolean b = turnBool(raw);
+        Boolean b = turnActive(raw);
         if (b != null) {
             hub.turnStatus = b ? 3 : 0;      // 布尔形态当「双闪/灭」
             return true;
@@ -768,22 +790,72 @@ public final class VendorSignals {
     }
 
     /**
-     * 宽松布尔：true / 1 / "1" / "true" / "on" 都算真；false / 0 / "off" / "no" 算假。
+     * 原始值 → 「这盏灯现在亮着吗」。
+     *
+     * ⚠️ 判据是 {@link #TURN_ACTIVE_VALUE}（**0 = 亮、1 = 灭**），不是"非零即真"。
      * 取不出来返回 null（表示"这个别名没在推数据"，不能用它判断灯灭）。
      */
-    private static Boolean turnBool(Object raw) {
+    private static Boolean turnActive(Object raw) {
         if (raw == null) return null;
-        if (raw instanceof Boolean) return (Boolean) raw;
-        if (raw instanceof Number) return ((Number) raw).doubleValue() != 0;
+        Double d = num(raw);
+        if (d != null) return d.intValue() == TURN_ACTIVE_VALUE;
+        if (raw instanceof Boolean) return (Boolean) raw;   // 本车没出现过这种形态
         String s = String.valueOf(raw).trim();
         if (s.isEmpty() || "null".equalsIgnoreCase(s)) return null;
-        try {
-            return Double.parseDouble(s) != 0;
-        } catch (Throwable ignored) {
-            // 不是数字，按字符串判断
-        }
         String t = s.toLowerCase(java.util.Locale.ROOT);
-        return !(t.startsWith("false") || t.startsWith("off") || t.startsWith("no"));
+        if (t.startsWith("true") || t.startsWith("on") || t.startsWith("yes")) return true;
+        if (t.startsWith("false") || t.startsWith("off") || t.startsWith("no")) return false;
+        return null;
+    }
+
+    // ─────────────────────────────────────── 转向灯原始值历史（校准用）
+
+    /**
+     * 转向灯两个别名的**原始值变化历史**（带时间，最近 24 条）。
+     *
+     * <p>为什么要留这个：真值语义已经猜错两次（先猜别名、再猜 1=亮）。
+     * 光看"当前值"永远定不了案 —— 得看到"我打左灯那一刻它变成了什么"。
+     * 用户下次上车：打一次左、一次右、一次双闪、再关掉，然后抓一份诊断，
+     * 这段历史会把每次变化**带时间**列出来 ⇒ 语义一眼可定。
+     *
+     * <p>⚠️ 别删：这是唯一能证明真值语义的现场证据。
+     */
+    private static final java.util.ArrayDeque<String> TURN_LOG =
+            new java.util.ArrayDeque<>();
+    private static final int TURN_LOG_MAX = 24;
+
+    private static void recordTurn(String alias, Object raw) {
+        String name = alias == null ? "?" : alias;
+        if (name.startsWith("vc_alias_turn_")) {
+            name = name.substring("vc_alias_turn_".length());
+        }
+        if (name.endsWith("_signal_on")) {
+            name = name.substring(0, name.length() - "_signal_on".length());
+        }
+        String line = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                .format(new java.util.Date()) + "   " + name + " = " + raw;
+        synchronized (TURN_LOG) {
+            if (!line.equals(TURN_LOG.peekLast())) {      // 连续重复不记
+                TURN_LOG.addLast(line);
+                while (TURN_LOG.size() > TURN_LOG_MAX) TURN_LOG.pollFirst();
+            }
+        }
+    }
+
+    /** 给 /logcat 用 */
+    public static String turnLogText() {
+        StringBuilder sb = new StringBuilder(1024);
+        sb.append("  当前语义 = 原始值 ").append(TURN_ACTIVE_VALUE)
+          .append(" 当成\"灯亮\"（0=亮 / 1=灭，2026-09-25 实车定案）\n");
+        sb.append("  说明     = 打一次左 / 右 / 双闪 / 关掉，看下面的变化记录就能定案\n");
+        synchronized (TURN_LOG) {
+            if (TURN_LOG.isEmpty()) {
+                sb.append("  （还没收到转向灯别名）\n");
+            } else {
+                for (String s : TURN_LOG) sb.append("  ").append(s).append('\n');
+            }
+        }
+        return sb.toString();
     }
 
     // ─────────────────────────────────────── 续航 / 总里程的候选与量纲

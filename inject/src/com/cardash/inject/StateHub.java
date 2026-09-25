@@ -195,8 +195,23 @@ public final class StateHub {
         return false;
     }
 
+    /**
+     * 导航数据能不能下发（决定 /state 里 nav.active 报不报 true）。
+     *
+     * ⚠️ 这里以前是"数据新鲜度"窗口（15 秒 → 60 秒），结果是：iPhone 250ms 轮询、
+     * **单帧就认**，某一帧报 active:false 它就把整条路线拆掉
+     *（`NaviCoordinator` 收到目的地 nil 立刻 `stopNavi()`）——
+     * 而引导广播偶尔断十几秒是正常的（高德重算路线、切前后台、隧道）。
+     *
+     * ⚠️ 2026-09-25 改成**只认 navActive 这个会话标志**：什么时候置 false 由车机侧
+     * 统一判（`AmapSignals.navigating()` + 看门狗：引导广播断 60 秒、或巡航），
+     * 这里不再自己按时间窗口猜。**两边各有一套阈值时总有一套会先误判** ——
+     * 用户实测的"车机退出导航了，顶栏摘要还挂着"就是这套双阈值错位的后果。
+     *
+     * 只留一个 10 分钟兜底：万一 navActive 被别的路径卡住，也别一直显示十几天前的旧数据。
+     */
     private boolean navFresh() {
-        return navActive && (System.currentTimeMillis() - navUpdatedAt) < 60000L;
+        return navActive && (System.currentTimeMillis() - navUpdatedAt) < 600000L;
     }
 
     /** 车速在 3 秒内没更新就认为链路断了（车不动时车机仍会周期上报，通常没问题） */

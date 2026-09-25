@@ -287,6 +287,16 @@ public final class BridgeRuntime {
           .append("  [").append(DestSignals.source() == null ? "-" : DestSignals.source()).append("]")
           .append(DestSignals.usable() ? "  可下发" : "  不下发")
           .append('\n');
+        // 转向灯一行（真值语义 0=亮/1=灭，见 VendorSignals.TURN_ACTIVE_VALUE）
+        Integer turn = hub.turnValue();
+        String turnRaw;
+        synchronized (hub.src) {
+            turnRaw = hub.src.get("turnRaw");
+        }
+        sb.append("  转向灯 ").append(turn == null ? "--（车机没这个数据）"
+                        : turn == 0 ? "灭" : turn == 1 ? "左" : turn == 2 ? "右" : "双闪")
+          .append("   ").append(turnRaw == null ? "" : turnRaw)
+          .append('\n');
 
         sb.append("\n信号来源:\n");
         synchronized (hub.src) {
@@ -424,6 +434,11 @@ public final class BridgeRuntime {
         //    这次接上：老车机包 / /logcat 里看不到这一段，就是这里漏了。
         sb.append("\n【目的地（高德广播 = 权威 / 语音 = 兜底）】\n");
         sb.append(DestSignals.report());
+
+        // 转向灯：真值语义已经猜错两次，所以把"原始值变化历史"带时间列出来
+        //（用户打一次左/右/双闪，这里就能定案）。
+        sb.append("\n【转向灯（原始值变化历史 —— 校准真值语义用）】\n");
+        sb.append(VendorSignals.turnLogText());
 
         // 车机原生导航 IPC —— 不靠语音拿目的地的那条路，这里也触发一次采样
         S05Navi.probeDestination("logcat");

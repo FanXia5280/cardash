@@ -107,10 +107,12 @@ public final class AmapSignals {
      * 所以模式不是 1 时**要看引导广播还新不新鲜**，不能立刻判否。
      */
     public static boolean navigating() {
-        if (mode == 2) return false;                    // 巡航
-        if (lastGuideAt > 0 && System.currentTimeMillis() - lastGuideAt < 60000L) return true;
-        return mode == 1;
+        if (mode == 2) return false;                       // 巡航：没有目的地
+        return lastGuideAt > 0 && (System.currentTimeMillis() - lastGuideAt) < GUIDE_END_MS;
     }
+
+    /** 引导广播断这么久 = 导航数据结束（导航中实测每秒一条，60 秒已经很宽） */
+    private static final long GUIDE_END_MS = 60000L;
 
     /** {@link #navigating()} 连续不成立是从什么时候开始的（0 = 现在还成立） */
     private static volatile long notNavigatingSince;
@@ -118,12 +120,17 @@ public final class AmapSignals {
     /**
      * 导航会话看门狗 —— 由 {@link BridgeRuntime} 的心跳线程每 10 秒调一次。
      *
-     * <p>判据：{@link #navigating()} **连续 90 秒**不成立，才认为这次导航真的结束了，
-     * 顺手把高德给的权威目的地清掉（{@link DestSignals#endSession()}）。
+     * <p>判据：{@link #navigating()} 不成立并且**持续到下一次心跳**，就认为导航
+     * 真的结束了，把导航字段和目的地一起收干净（{@link #endSession()}）。
      *
-     * <p>⚠️ 90 秒的去抖是故意的：引导广播偶尔断十几秒（高德重算路线、切前后台、
-     * 进隧道）是正常的，那会儿判成"结束"会让 iPhone 立刻退出导航 ——
-     * 用户明确要求「中间不中断导航」。宁可晚 90 秒收尾，也不要中途掉。
+     * <p>⚠️ 为什么必须**周期性地**判（2026-09-25 修）：以前清导航字段只发生在
+     * 「驾驶模式变化的那一刻」（{@link #maybeClearIfNaviEnded}），那一刻引导广播
+     * 可能还新鲜（用户实测是 30 秒前）⇒ 判定失败之后就**再也不会重判** ⇒
+     * 车机早就退出导航了，iPhone 顶栏一直挂着「15 分钟 6.7 公里」（用户报的 bug）。
+     *
+     * <p>⚠️ 去抖只留 10 秒（一个心跳周期）：真正的时间闸门是 {@link #GUIDE_END_MS}
+     * （引导广播断 60 秒），那已经很保守了。用户明确要求「车机退出导航，IPA 也自动退出」，
+     * 再多等就没意义了。行车途中引导广播打嗝（几秒、十几秒）不会触发。
      */
     public static void tick() {
         if (navigating()) {
@@ -135,11 +142,51 @@ public final class AmapSignals {
             notNavigatingSince = now;
             return;
         }
-        if (now - notNavigatingSince >= 90000L) {
+        if (now - notNavigatingSince >= 10000L) {
             notNavigatingSince = 0;
-            DestSignals.endSession();
+            endSession();
         }
     }
+
+    /**
+     * 导航会话真的结束了：**导航字段 + 目的地一起收干净**。
+     *
+     * <p>导航字段（顶栏的「还有多久 / 多远 / 几点到」、转向）和目的地是两套东西，
+     * 少清一套就会出现「地图已经回普通地图了，顶栏还挂着导航摘要」这种半死状态
+     *（用户 2026-09-25 实测就是这个）。
+     */
+    private static void endSession() {
+        clearNavFields(StateHub.get());
+        DestSignals.endSession();
+        maxGuideGapMs = 0;
+        maxGuideGapAt = 0;
+        Diagnostics.log("导航会话结束：导航字段 + 目的地已清空");
+    }
+
+    /** 顶栏摘要/转向这些都从这几个字段来，会话结束时必须一起清 */
+    private static void clearNavFields(StateHub hub) {
+        hub.navActive = false;
+        hub.navTurn = null;
+        hub.navEta = null;
+        hub.navRemain = null;
+        hub.navArrive = null;
+        hub.navAfter = null;
+        hub.navDistance = null;
+        hub.navSub = null;
+        hub.navTitle = null;
+    }
+
+    // ── 校准用：本次导航里引导广播最长断了多久 ──
+
+    /**
+     * 本次会话中两次引导广播之间的**最大间隔**。
+     *
+     * <p>用来校准 {@link #GUIDE_END_MS}：现在取 60 秒是"宁可晚收、绝不中途掉"的保守值。
+     * 跑几趟车之后，如果这个最大值一直只有几秒（说明导航中广播很稳），
+     * 就可以把阈值降到 20~30 秒，让"车机退出导航 → IPA 自动退出"更快。
+     */
+    private static volatile long maxGuideGapMs;
+    private static volatile long maxGuideGapAt;
 
     private static void onGuide(Intent i) {
         StateHub hub = StateHub.get();
@@ -167,7 +214,16 @@ public final class AmapSignals {
         String curRoad = pickStr(i, "EXTRA_ROAD_NAME", "CUR_ROAD_NAME");
         String nextRoad = pickStr(i, "EXTRA_NEXT_ROAD_NAME", "NEXT_ROAD_NAME");
 
-        lastGuideAt = System.currentTimeMillis();
+        // 记下"上一条引导广播到现在隔了多久"的最大值（校准 GUIDE_END_MS 用）
+        long now = System.currentTimeMillis();
+        if (lastGuideAt > 0) {
+            long gap = now - lastGuideAt;
+            if (gap > maxGuideGapMs) {
+                maxGuideGapMs = gap;
+                maxGuideGapAt = now;
+            }
+        }
+        lastGuideAt = now;
         lastRaw = "dist=" + dist + " icon=" + icon + " remain=" + remainDis
                 + " time=" + remainTime + " cur=" + curRoad + " next=" + nextRoad
                 + " limit=" + limit;
@@ -260,19 +316,19 @@ public final class AmapSignals {
      * （引导广播在真正导航时每秒都来，所以这个判据很稳。）
      */
     private static void maybeClearIfNaviEnded(StateHub hub) {
-        if (lastGuideAt > 0 && System.currentTimeMillis() - lastGuideAt < 60000L) {
+        if (lastGuideAt > 0 && System.currentTimeMillis() - lastGuideAt < GUIDE_END_MS) {
             return;                 // 还在收引导信息，那个「空闲」是假的
         }
-        hub.navActive = false;
-        hub.navTurn = null;
-        hub.navEta = null;
-        hub.navRemain = null;
-        hub.navArrive = null;
-        hub.navAfter = null;
-        hub.navDistance = null;
-        hub.navSub = null;
-        hub.navTitle = null;
+        // ⚠️ 这条路只在"驾驶模式变化的那一刻"走一次，**不能只靠它**（漏了就永远不清，
+        //    见 tick() 的注释）。真正兜底的是每 10 秒一次的 tick()。
+        endSession();
     }
+
+    /** 本次导航里引导广播最长断了多久（毫秒）—— 校准 GUIDE_END_MS 用，见字段注释 */
+    public static long maxGuideGapMs() { return maxGuideGapMs; }
+
+    /** 那个最长间隔发生在什么时候（毫秒时间戳，0 = 没有） */
+    public static long maxGuideGapAt() { return maxGuideGapAt; }
 
     /** 给 /logcat 用 */
     public static String rawSummary() {
@@ -283,6 +339,10 @@ public final class AmapSignals {
                 + "\n  目的地来源 = " + (DestSignals.source() == null ? "--" : DestSignals.source())
                 + "   会话看门狗 = " + (notNavigatingSince == 0 ? "在导航/未开始"
                         : ("不成立 " + ((System.currentTimeMillis() - notNavigatingSince) / 1000) + " 秒"))
+                + "\n  结束判据   = 引导广播断 " + (GUIDE_END_MS / 1000) + " 秒算结束"
+                + "   （本次导航最长断流 = "
+                + (maxGuideGapMs == 0 ? "--" : (maxGuideGapMs / 1000) + " 秒")
+                + "   ← 这个值一直很小的话可以把阈值调低）"
                 + "\n  最后一条 = " + lastRaw + "\n";
     }
 

@@ -550,6 +550,14 @@ final class DashboardModel: ObservableObject {
 
     var displayNav: NavState? {
         if let m = mockNav { return m }        // 模拟路线优先（给用户试排版用）
+        // 用户按过「退出导航」、而车机还在推同一条目的地 ⇒ **顶栏摘要也一起收掉**。
+        //
+        // ⚠️ 2026-09-25 修（用户实测截图：地图已经回普通地图了，顶栏还挂着
+        //    「15 分钟 6.7 公里 预计 10:45 到达」）：以前只收导航视图，
+        //    车机那边照旧报 nav.active=true，摘要就一直显示。
+        // 车机换目的地 / 导航结束 / 失联时 suppressedDestKey 会自动作废
+        //（见 syncDestination），所以新导航照常显示。
+        if let key = suppressedDestKey, key == car?.dest?.routeKey { return nil }
         return carFresh ? car?.nav : nil
     }
 
@@ -640,7 +648,11 @@ final class DashboardModel: ObservableObject {
             navOffSince = now          // 第一帧：先记下时间，给一次机会
             return
         }
-        guard now.timeIntervalSince(since) >= 20 else { return }
+        // ⚠️ 2026-09-25 从 20 秒缩到 10 秒：车机侧现在只在**真的判到导航结束**
+        //（引导广播断 60 秒、或巡航）时才会报 active:false，一次 250ms 的抖动
+        // 已经不可能再造成误判了 ⇒ 手机这边不用再等那么久。
+        // 用户要求「车机退出导航，IPA 也自动退出」，10 秒是留给"单次丢包"的余量。
+        guard now.timeIntervalSince(since) >= 10 else { return }
         stopPending = true
         routeDest = nil
         routedKey = nil
