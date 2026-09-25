@@ -785,7 +785,11 @@ public final class VendorSignals {
             Boolean b = turnActive(raw);
             if (b == null) return false;          // 没见过的值：只记历史，不改状态
             hub.turnLeftSeen = true;
-            if (b) hub.turnLeftOnAt = System.currentTimeMillis();
+            if (b) {
+                hub.turnLeftOnAt = System.currentTimeMillis();
+                // 左灯刚亮 ⇒ 检查右灯该不该灭（"右转切左转，别两边同时亮"，见 TURN_SWITCH_MS）
+                hub.turnSwitch('L');
+            }
             return true;
         }
         if (A_TURN_R.equals(alias)) {
@@ -794,7 +798,10 @@ public final class VendorSignals {
             Boolean b = turnActive(raw);
             if (b == null) return false;
             hub.turnRightSeen = true;
-            if (b) hub.turnRightOnAt = System.currentTimeMillis();
+            if (b) {
+                hub.turnRightOnAt = System.currentTimeMillis();
+                hub.turnSwitch('R');
+            }
             return true;
         }
         Double d = num(raw);
@@ -892,7 +899,7 @@ public final class VendorSignals {
         StringBuilder sb = new StringBuilder(1024);
         sb.append("  当前语义 = 原始值 ").append(TURN_OFF_VALUE).append(" 当成\"灯灭\"、≥ ")
           .append(TURN_ON_MIN).append(" 当成\"灯亮\"（1=灭 / 2=亮，2026-09-25 第二轮实车定案）\n");
-        sb.append("  下发前   = 有 2.5 秒保持（属性跟着灯泡闪，1↔2 反复跳，直接发会抖）\n");
+        sb.append("  下发前   = 0.7 秒保持 + 换边互斥（属性跟着灯泡闪，1↔2 反复跳，直接发会抖）\n");
         sb.append("  说明     = 打一次左 / 右 / 双闪 / 关掉，看下面的变化记录就能核对\n");
         synchronized (TURN_LOG) {
             if (TURN_LOG.isEmpty()) {

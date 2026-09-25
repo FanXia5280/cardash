@@ -121,6 +121,12 @@ public final class LogcatSignals {
                     // 放后面会被 continue 掉。
                     DestSignals.onLine(line);
 
+                    // 顺手记一下高德自己的"退出/结束导航"日志（纯取证，不参与判断）：
+                    // 现在"车机退出导航"只能靠"活路线断了 15 秒"去推，
+                    // 一旦在真机上看到高德的原话，就能改成秒级触发。
+                    // 内部只有几个 indexOf 粗筛，很便宜。
+                    AmapSignals.noteLogLine(line);
+
                     // 快速排除绝大多数无关行，避免每行都跑正则。
                     // 顺带把 VehicleProperty 也收进来 —— 万一车机打的不是
                     // CarPropertyValue 而是另一种格式，采样里能看到，不至于瞎猜。

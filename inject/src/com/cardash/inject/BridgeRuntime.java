@@ -430,6 +430,9 @@ public final class BridgeRuntime {
         // 2026-09-25 第二轮加的（那轮的两个 bug 都缺这份数据才能一锤定音）。
         sb.append("\n【高德广播类型统计（判断车机到底还在不在导航）】\n");
         sb.append(AmapSignals.keyTypeStats());
+        // 高德自己的"退出/结束导航"日志（取证用：有原文就能把退出检测做到秒级）
+        sb.append("\n【高德自己的\"退出/结束导航\"日志（有原文就能做到秒级退出）】\n");
+        sb.append(AmapSignals.navLogText());
         sb.append('\n').append(AmapSignals.iconCalibration());
 
         // 目的地（双来源）。

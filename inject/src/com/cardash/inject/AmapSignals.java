@@ -100,6 +100,14 @@ public final class AmapSignals {
         } else if (keyType == TYPE_STATE) {
             onState(intent);
         }
+
+        // ⚠️ 每一条广播都顺手问一次"导航是不是已经结束了"。
+        //    为什么放在这里、而不是只靠"驾驶模式变化"那一刻：
+        //    车机一退出导航，高德**一条 10001 都不发了**，但各种心跳广播一直在发
+        //    （实测 12205 每秒一条、10019 每秒 1.4 条）—— 正好拿它们当"定时器"，
+        //    于是退出检测的延迟就等于 GUIDE_END_MS 本身（15 秒），
+        //    而不是"15 秒 + 下一个心跳"（那会拖到 25 秒）。
+        maybeEndIfStale();
     }
 
     /**
@@ -133,55 +141,73 @@ public final class AmapSignals {
      */
     private static volatile long lastLiveRouteAt;
 
-    /** 活路线断这么久 = 导航结束（导航中实测每秒一条、最长断流 7 秒 ⇒ 30 秒有 4 倍余量） */
-    private static final long GUIDE_END_MS = 30000L;
+    /**
+     * 活路线断这么久 = 导航结束。
+     *
+     * <p>⚠️ 2026-09-25 第三轮从 30 秒收到 **15 秒**。两条实测依据：
+     * <ul>
+     *   <li>导航中引导广播实测 **2 条/秒**（本轮日志：10001 共 68 条 / 33 秒），
+     *       最长断流 12 秒 ⇒ 15 秒略微高于最坏情况；</li>
+     *   <li>车机**一退出导航，10001 就完全停了**（前一份日志里 12:09:19~12:09:50
+     *       车停着没导航，31 秒里一条 10001 都没有，会话判据一直判"已结束"）
+     *       ⇒ 用"多久没活路线"当退出信号是可靠的。</li>
+     * </ul>
+     * 用户要求"车机退出导航 IPA 也自动退出"，所以宁可贴着最坏情况取值，
+     * 也不要为了保险留到 30 秒 —— 那是用户能明显感觉到的等待。
+     */
+    private static final long GUIDE_END_MS = 15000L;
 
     /**
-     * 从"驾驶模式变成空闲/巡航"起，活路线已经断了这么久 ⇒ 立刻收尾，不用等满 30 秒。
+     * 从"驾驶模式变成空闲/巡航"起，活路线断了这么久就收尾。
      *
-     * <p>取 20 秒的理由：EXTRA_STATE 会 8↔40 每分钟翻一次（**导航中也会**），
-     * 所以这个"快收"路径在行车途中也会被触发，必须留够余量 ——
-     * 实测引导广播最长断流 7 秒，20 秒是近 3 倍。宁可晚 10 秒收，
-     * 也绝不能因为一次隧道/重算把正在跑的导航掐掉（用户的第一要求）。
+     * <p>⚠️ 和 {@link #GUIDE_END_MS} 取同一个值：EXTRA_STATE 会 8↔40 每分钟翻一次
+     *（**导航中也会**），所以"快收"路径在行车途中同样会被触发，不能比它更激进 ——
+     * 否则一次隧道/重算就会把正在跑的导航掐掉（用户的第一要求：不中断）。
      */
-    private static final long FAST_END_MS = 20000L;
+    private static final long FAST_END_MS = 15000L;
 
     /** {@link #navigating()} 连续不成立是从什么时候开始的（0 = 现在还成立） */
     private static volatile long notNavigatingSince;
 
     /**
-     * 导航会话看门狗 —— 由 {@link BridgeRuntime} 的心跳线程每 10 秒调一次。
+     * 导航会话看门狗（兜底）—— 由 {@link BridgeRuntime} 的心跳线程每 10 秒调一次。
      *
-     * <p>判据：{@link #navigating()} 不成立并且**持续到下一次心跳**，就认为导航
-     * 真的结束了，把导航字段和目的地一起收干净（{@link #endSession()}）。
+     * <p>真正的判定在 {@link #maybeEndIfStale()}，而它**每一条高德广播都会调一次**
+     * （实测每秒 2~3 条）⇒ 退出检测的延迟≈{@link GUIDE_END_MS} 本身（15 秒）。
+     * 这个方法只是"万一广播全停了"的兜底。
      *
      * <p>⚠️ 为什么必须**周期性地**判（2026-09-25 修）：以前清导航字段只发生在
-     * 「驾驶模式变化的那一刻」（{@link #maybeClearIfNaviEnded}），那一刻引导广播
-     * 可能还新鲜（用户实测是 30 秒前）⇒ 判定失败之后就**再也不会重判** ⇒
-     * 车机早就退出导航了，iPhone 顶栏一直挂着「15 分钟 6.7 公里」（用户报的 bug）。
-     *
-     * <p>⚠️ 去抖只留 10 秒（一个心跳周期）：真正的时间闸门是 {@link #GUIDE_END_MS}
-     * （引导广播断 60 秒），那已经很保守了。用户明确要求「车机退出导航，IPA 也自动退出」，
-     * 再多等就没意义了。行车途中引导广播打嗝（几秒、十几秒）不会触发。
+     * 「驾驶模式变化的那一刻」，那一刻引导广播可能还新鲜（用户实测是 30 秒前）
+     * ⇒ 判定失败之后就**再也不会重判** ⇒ 车机早就退出导航了，
+     * iPhone 顶栏一直挂着「15 分钟 6.7 公里」（用户报的 bug）。
      */
     public static void tick() {
         if (navigating()) {
             notNavigatingSince = 0;
             return;
         }
+        // notNavigatingSince 现在只是**诊断用**（/logcat 里显示"不成立多少秒"）：
+        // 真正的判定统一在 maybeEndIfStale() 里，且每一条广播都会调一次，
+        // 所以这个 10 秒心跳只是兜底（万一广播全停了）。
+        if (notNavigatingSince == 0) notNavigatingSince = System.currentTimeMillis();
+        maybeEndIfStale();
+    }
+
+    /**
+     * 导航是不是已经结束了？结束了就把**导航字段 + 目的地一起**收干净。
+     *
+     * <p>由 {@link #handle}（每一条高德广播，实测每秒 2~3 条）和
+     * {@link #tick}（10 秒心跳，兜底）调用 ⇒ 检测延迟≈{@link GUIDE_END_MS} 本身。
+     */
+    private static void maybeEndIfStale() {
+        long live = lastLiveRouteAt;
         // 本次开机**从没出现过活路线** ⇒ 没有会话要收。
         // ⚠️ 少了这个闸门，每次"空闲"状态变化都会打一条「导航会话结束」，
         //    日志被刷满还容易误判（用户上一轮抓的日志里就是这样）。
-        if (lastLiveRouteAt == 0) return;
-        long now = System.currentTimeMillis();
-        if (notNavigatingSince == 0) {
-            notNavigatingSince = now;
-            return;
-        }
-        if (now - notNavigatingSince >= 10000L) {
-            notNavigatingSince = 0;
-            endSession();
-        }
+        if (live == 0) return;
+        long age = System.currentTimeMillis() - live;
+        if (age < FAST_END_MS) return;      // 还在导航（实测最长断流 12 秒）
+        endSession(age);
     }
 
     /**
@@ -191,7 +217,7 @@ public final class AmapSignals {
      * 少清一套就会出现「地图已经回普通地图了，顶栏还挂着导航摘要」这种半死状态
      *（用户 2026-09-25 实测就是这个）。
      */
-    private static void endSession() {
+    private static void endSession(long liveGapMs) {
         clearNavFields(StateHub.get());
         DestSignals.endSession();
         maxGuideGapMs = 0;
@@ -200,7 +226,11 @@ public final class AmapSignals {
         // 不然"退出导航后高德还缓存着几秒旧引导"会立刻把会话又点亮。
         lastLiveRouteAt = 0;
         notNavigatingSince = 0;
-        Diagnostics.log("导航会话结束：导航字段 + 目的地已清空");
+        // 把"为什么判结束"写进日志 —— 以后再说"IPA 没退出"，看这一行就能分清
+        // 是我们判早了/判晚了，还是**压根没判**（后者说明高德退出导航后还在发活路线，
+        // 那就得换判据，光调时间窗没用）。
+        Diagnostics.log("导航会话结束（活路线已断 " + (liveGapMs / 1000) + " 秒）："
+                + "导航字段 + 目的地已清空");
     }
 
     /** 顶栏摘要/转向这些都从这几个字段来，会话结束时必须一起清 */
@@ -355,10 +385,9 @@ public final class AmapSignals {
                 + " (EXTRA_STATE=" + st + ")");
         StateHub hub = StateHub.get();
         hub.setSource("amap", m == 1 ? "navigating" : m == 2 ? "cruising" : "idle");
-        // 只要不是"导航中"，就顺手问一句会话结束没有（巡航也算 —— 巡航没有目的地）。
-        // ⚠️ 但 EXTRA_STATE 本身不可信（停车时也每分钟发 8，见 navigating()），
-        //    所以真正说了算的是里面的"活路线断了多久"。
-        if (m != 1) maybeClearIfNaviEnded(hub);
+        // ⚠️ 这里**不再**判"导航结束"：EXTRA_STATE 本身不可信（停车时也每分钟发 8），
+        //    而 handle() 的末尾对**每一条广播**都会调 maybeEndIfStale()，
+        //    判据是"活路线断了多久"，那条路已经覆盖了这里。
     }
 
     /**
@@ -373,17 +402,12 @@ public final class AmapSignals {
      * 现在只看**引导广播**断没断：超过 60 秒没有引导信息才算导航结束。
      * （引导广播在真正导航时每秒都来，所以这个判据很稳。）
      */
-    private static void maybeClearIfNaviEnded(StateHub hub) {
-        if (lastLiveRouteAt == 0) return;                 // 没有会话
-        // ⚠️ 这里用**更短的窗口** FAST_END_MS（15 秒没有活路线）：从车机上退出导航时
-        //    高德会先发这个"空闲/巡航"状态广播，早收 15 秒，用户体感差很多
-        //（用户明确要求"车机退出导航，IPA 也自动退"）。
-        //    15 秒是实测最长断流 7 秒的 2 倍余量，行车途中那点打嗝不会误判。
-        if (System.currentTimeMillis() - lastLiveRouteAt < FAST_END_MS) return;
-        // ⚠️ 这条路只在"驾驶模式变化的那一刻"走一次，**不能只靠它**（漏了就永远不清，
-        //    见 tick() 的注释）。真正兜底的是每 10 秒一次的 tick()。
-        endSession();
-    }
+    // 说明：以前这里叫 maybeClearIfNaviEnded（只在"驾驶模式变化的那一刻"判一次）。
+    // ⚠️ 那种写法有两个坑，2026-09-25 已经全部换掉，别再改回去：
+    //   ① 只在模式变化时判 ⇒ 那一刻引导广播可能还新鲜，判定失败之后就**再也不重判**
+    //      （用户上一轮报的"顶栏摘要挂着不消失"就是这么来的）；
+    //   ② 模式本身不可信（EXTRA_STATE=8 停车时也每分钟发）。
+    // 现在统一由 maybeEndIfStale() 判，而且**每一条广播都会调一次**。
 
     /** 本次导航里引导广播最长断了多久（毫秒）—— 校准 GUIDE_END_MS 用，见字段注释 */
     public static long maxGuideGapMs() { return maxGuideGapMs; }
@@ -455,7 +479,9 @@ public final class AmapSignals {
         synchronized (KEYTYPE) {
             KStat s = KEYTYPE.get(keyType);
             if (s == null) {
-                if (KEYTYPE.size() >= 12) return;
+                // 上限 24 种：实测这台车一次导航就出现 12 种以上，
+                // 而"有没有专门的导航结束广播"就藏在那些少见类型里（别卡在 12）。
+                if (KEYTYPE.size() >= 24) return;
                 s = new KStat();
                 s.firstAt = now;
                 s.keys = keyNames(i);
@@ -479,6 +505,57 @@ public final class AmapSignals {
             }
             if (sb.length() > 0) sb.append(' ');
             sb.append(k);
+        }
+        return sb.toString();
+    }
+
+    // ─────────────────────────────────────── 高德自己的"退出导航"日志（诊断）
+
+    /**
+     * 高德自己打出来的、像是"进/出导航"的日志行（最近 8 条）。
+     *
+     * <p>为什么留着：车机退出导航这件事，高德**没有**给我们广播（这一版没找到），
+     * 所以现在只能靠"活路线断多久"去猜（{@link #GUIDE_END_MS} = 15 秒）。
+     * 但高德 App 自己极可能打了"退出导航/结束导航"之类的日志 ——
+     * 一旦在真机上看到原文，就能把它变成**秒级**的退出触发，不用再等 15 秒。
+     * 这一块纯粹是"取证"，不参与任何判断。
+     */
+    private static final java.util.ArrayDeque<String> NAVLOG = new java.util.ArrayDeque<>();
+
+    /** 由 {@code LogcatSignals} 把每一行 logcat 喂进来（只做关键字粗筛，很便宜） */
+    public static void noteLogLine(String line) {
+        if (line == null || line.length() < 6) return;
+        if (line.indexOf("导航") < 0) return;                    // 粗筛 1：必须提到导航
+        // 粗筛 2：必须是高德自己打的（避免把别的 App 的日志记进来）
+        boolean fromAmap = line.indexOf("mahjong") >= 0
+                || line.indexOf("utonavi") >= 0           // AutoNavi / autonavi
+                || line.indexOf("amap") >= 0
+                || line.indexOf("高德") >= 0;
+        if (!fromAmap) return;
+        // 粗筛 3：必须带"结束"语义的词
+        if (line.indexOf("退出") < 0 && line.indexOf("结束") < 0
+                && line.indexOf("停止") < 0 && line.indexOf("取消") < 0
+                && line.indexOf("exit") < 0 && line.indexOf("stop") < 0) return;
+        String s = line.length() > 200 ? line.substring(0, 200) + "…" : line;
+        synchronized (NAVLOG) {
+            if (!s.equals(NAVLOG.peekLast())) {
+                NAVLOG.addLast(s);
+                while (NAVLOG.size() > 8) NAVLOG.pollFirst();
+            }
+        }
+    }
+
+    /** 给 /logcat 用 */
+    public static String navLogText() {
+        StringBuilder sb = new StringBuilder(1024);
+        sb.append("  （看看高德自己有没有打\"退出/结束导航\"的日志 —— 有的话\n");
+        sb.append("    就能把退出检测从 15 秒缩到 1 秒内，直接把原文发我）\n");
+        synchronized (NAVLOG) {
+            if (NAVLOG.isEmpty()) {
+                sb.append("  （还没抓到；在车机上退出一次导航再看这里）\n");
+            } else {
+                for (String s : NAVLOG) sb.append("  ").append(s).append('\n');
+            }
         }
         return sb.toString();
     }

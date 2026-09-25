@@ -76,10 +76,29 @@ public final class StateHub {
      * <p>⚠️ 车机的转向灯属性**是跟着灯泡一起闪的**（实测 1↔2 每秒跳两三次，
      * 见 {@code VendorSignals.TURN_OFF_VALUE}）。直接把某一帧的值发出去，
      * iPhone 250ms 轮询到的就是随机 on/off —— 一闪一闪地抖，而不是稳定的
-     * "左转灯亮着"。所以这里做保持：**最近 2.5 秒内见过"亮"就算亮着**；
-     * 灯关掉后属性停在"灭"（1）不再更新，2.5 秒后自然收掉。
+     * "左转灯亮着"。所以要保持一下，让它在闪的"灭"相里也不掉。
+     *
+     * <p>⚠️ 2026-09-25 第三轮从 **2500ms 收到 700ms**（用户实测报的正是 2.5 秒的锅）：
+     * 用户报「车机已经关灯了，IPA 还持续闪一两秒」和「右转切左转时两边同时亮几秒」
+     * —— 都是这个窗口太长导致的（关灯后要等 2.5 秒才收；切换时另一边也还在窗口里）。
+     * 现在 700ms 只够跨过闪动的"灭"相（实测灭相约 0.3 秒），关灯后不到 1 秒就收干净；
+     * 切换那一下另有 {@link #TURN_SWITCH_MS} 的互斥处理。
      */
-    private static final long TURN_HOLD_MS = 2500L;
+    private static final long TURN_HOLD_MS = 700L;
+
+    /**
+     * "换边"的互斥判据（毫秒）：一侧亮起时，另一侧如果**这么久都没亮过**，
+     * 就立刻把它判成灭。
+     *
+     * <p>为什么需要：右转切左转的那一瞬间，右灯的"最近亮"时间戳还在保持窗口里
+     * ⇒ 两边会同时亮（用户实测就是这个）。但**不能**简单地说"一侧亮另一侧就灭" ——
+     * 双闪时两边是**交替**推值的（左、右、左、右…，实测间隔只有零点几秒），
+     * 那种情况下两边都必须保持亮。
+     *
+     * <p>⇒ 取 300ms 当分界：双闪的交替间隔比它小（不被误杀），
+     * 而真正换边时另一侧早就停了（比它大得多，立刻清掉）。
+     */
+    private static final long TURN_SWITCH_MS = 300L;
 
     /**
      * 归一化转向灯：**0=灭 1=左 2=右 3=双闪**，null = 完全没数据（iPhone 就别显示）。
@@ -97,6 +116,20 @@ public final class StateHub {
         if (r) return 2;
         if (turnLeftSeen || turnRightSeen) return 0;
         return null;
+    }
+
+    /**
+     * 一侧刚亮起 ⇒ 顺手看另一侧是不是该灭（"换边"，见 {@link #TURN_SWITCH_MS}）。
+     *
+     * @param side 刚收到"亮"的那一侧：{@code 'L'} 左灯、{@code 'R'} 右灯
+     */
+    public void turnSwitch(char side) {
+        long now = System.currentTimeMillis();
+        if (side == 'L') {
+            if (now - turnRightOnAt > TURN_SWITCH_MS) turnRightOnAt = 0;
+        } else {
+            if (now - turnLeftOnAt > TURN_SWITCH_MS) turnLeftOnAt = 0;
+        }
     }
 
 
@@ -156,8 +189,8 @@ public final class StateHub {
      * （高德重算路线、切前后台、进隧道），15 秒的窗口太紧，
      * 表现就是"导航自己退出了 / 闪一下从头算路"。
      *
-     * 60 秒和 {@link AmapSignals#maybeClearIfNaviEnded} 的判据一致；
-     * 真的结束了由那边清 navActive，或者由会话看门狗兜底。
+     * 60 秒只是**兜底**：真正说了算的是 {@link AmapSignals} 的会话判定
+     * （活路线断 15 秒 ⇒ `endSession()` 把 navActive 置 false ⇒ 这里立刻就不新鲜了）。
      * 用户明确要求：**中间不中断导航**，宁可多显示一会儿旧数据。
      */
     // ── 导航字段的来源仲裁 ──
