@@ -122,6 +122,26 @@ public final class DestSignals {
     /** 数据来源：null = 没有，见 SRC_VOICE / SRC_AMAP */
     private static volatile String source;
 
+    /**
+     * **候选目的地**（还没被"活路线"的引导广播背书），见 {@link #confirmPending()}。
+     *
+     * <p>为什么要这道闸门（2026-09-25 第二轮，用户报「车机退出导航了，IPA 还显示路线」）：
+     * 实车日志证明，车机**没在导航**时高德照样每分钟发状态广播，而那些广播里夹带着
+     * POI 载荷 —— 09-24 19:49 / 21:02 用户人在办公室、车停着，bridge.log 里照样出现
+     * 「目的地(高德广播) = 巷子口郑鸡肉柴火鸡」。以前"翻到就当目的地" ⇒
+     * 车机早退出导航了，IPA 又被点亮一条新路线。
+     */
+    private static volatile Double pendLat;
+    private static volatile Double pendLon;
+    private static volatile String pendName;
+    private static volatile long pendAt;
+
+    /** 候选等多久还没等到活路线就丢掉（手动点导航时目的地载荷常比引导广播早几十毫秒） */
+    private static final long PEND_TTL_MS = 8000L;
+
+    /** 最后一次挖到目的地的那条广播长什么样（KEY_TYPE + 命中的字段名），只给诊断用 */
+    private static volatile String lastHitDesc;
+
     private DestSignals() { }
 
     // ─────────────────────────────────────── 来源一：语音 NLU 日志（兜底）
@@ -278,8 +298,34 @@ public final class DestSignals {
         String name;
         Double lat;
         Double lon;
+        /** 命中的字段名（最多 3 个），只给诊断用 —— 下次调闸门靠它 */
+        String note;
+        /**
+         * 这条载荷里**出现过"起点"字段**吗（FROM_POI_* / START_POI_* 之类）。
+         *
+         * <p>只做诊断，**不参与判断** —— 一条真路线的载荷通常同时带着起点和终点，
+         * 而"搜索结果/推荐位"那种杂散载荷只有终点。要是下一轮日志证明
+         * "凡是被采信的载荷都有起点"，就可以把"必须有起点"升级成硬条件，
+         * 那样连"导航中夹带的推荐 POI"也一并挡掉。
+         */
+        boolean sawFrom;
 
         boolean usable() { return lat != null && lon != null; }
+    }
+
+    /** 把命中的字段名记进 note（最多 3 个，去重） */
+    private static void addNote(Hit hit, String key) {
+        if (hit == null || key == null) return;
+        String cur = hit.note;
+        if (cur == null) {
+            hit.note = key;
+            return;
+        }
+        if (cur.contains(key)) return;
+        int n = 1;
+        for (int i = 0; i < cur.length(); i++) if (cur.charAt(i) == '+') n++;
+        if (n >= 3) return;
+        hit.note = cur + "+" + key;
     }
 
     /**
@@ -298,7 +344,7 @@ public final class DestSignals {
      *
      * ⚠️ 只读，绝不往高德发任何东西（用户要求：中间不干扰导航）。
      */
-    public static void onAmapBroadcast(Intent intent) {
+    public static void onAmapBroadcast(Intent intent, int keyType) {
         if (intent == null) return;
         Bundle b;
         try {
@@ -337,12 +383,54 @@ public final class DestSignals {
         }
 
         if (hit.usable()) {
-            applyAmap(hit.name, hit.lat, hit.lon);
+            lastHitDesc = "KEY_TYPE=" + keyType + "  字段=" + (hit.note == null ? "?" : hit.note)
+                    + "  含起点=" + (hit.sawFrom ? "是" : "否");
+            if (AmapSignals.navigating()) {
+                // 车机确实在导航（有活路线）⇒ 直接采信
+                applyAmap(hit.name, hit.lat, hit.lon);
+            } else {
+                // 车机没在导航 ⇒ 只当**候选**，等引导广播来背书（见 pendLat 的注释）
+                pendName = hit.name;
+                pendLat = hit.lat;
+                pendLon = hit.lon;
+                pendAt = System.currentTimeMillis();
+                StateHub.get().setSource("destGate", "候选（等活路线背书）" + lastHitDesc);
+            }
         } else if (hit.name != null && source == null) {
             // 只有名字没有坐标：**不采信**（2026-09-24 用户要求"绝不导航到别的目的地"，
             // 拿名字去地理编码正是"目的地被改掉"的入口）。留在诊断里就好。
             StateHub.get().setSource("destAmapNameOnly", hit.name);
         }
+    }
+
+    /**
+     * 候选目的地**转正** —— 由 {@link AmapSignals} 在收到"带活路线"的引导广播时调用。
+     *
+     * <p>这道闸门是整个第二轮修复的核心：目的地必须**由导航会话背书**。
+     * 手动点导航时目的地载荷常常比第一条引导广播早到几十毫秒，所以不能简单地
+     * "没在导航就不收"，而是先存候选、一见活路线立刻转正；
+     * {@link #PEND_TTL_MS} 内没等到活路线就丢掉（那就是车机没在导航时的杂散载荷）。
+     */
+    public static void confirmPending() {
+        Double la = pendLat;
+        Double lo = pendLon;
+        long at = pendAt;
+        if (la == null || lo == null) return;
+        String n = pendName;
+        pendLat = null;
+        pendLon = null;
+        pendName = null;
+        pendAt = 0;
+        if (System.currentTimeMillis() - at > PEND_TTL_MS) return;   // 过期了，丢
+        applyAmap(n, la, lo);
+    }
+
+    /** 丢掉候选（会话结束时用 —— 那个候选属于上一轮） */
+    private static void dropPending() {
+        pendLat = null;
+        pendLon = null;
+        pendName = null;
+        pendAt = 0;
     }
 
     /**
@@ -358,13 +446,27 @@ public final class DestSignals {
     private static void classify(String key, Object value, Hit hit) {
         String n = normKey(key);
         if (n.isEmpty()) return;
+        if (isFromKey(n)) hit.sawFrom = true;
         if (NAME_KEYS.contains(n)) {
             hit.name = firstNonEmpty(hit.name, asString(value));
+            addNote(hit, key);
         } else if (LAT_KEYS.contains(n)) {
             hit.lat = firstNonNull(hit.lat, asDouble(value));
+            addNote(hit, key);
         } else if (LON_KEYS.contains(n)) {
             hit.lon = firstNonNull(hit.lon, asDouble(value));
+            addNote(hit, key);
         }
+    }
+
+    /**
+     * 是不是"起点"类字段（{@code FROM_POI_*} / {@code START_POI_*} / {@code FROM*}）。
+     *
+     * <p>⚠️ **只用于诊断**（{@link Hit#sawFrom}），不参与任何判断 ——
+     * 起点绝不能当目的地（2026-09-23 那次"IPA 路线乱跳"就是这么来的）。
+     */
+    private static boolean isFromKey(String n) {
+        return n.startsWith("FROMPOI") || n.startsWith("STARTPOI") || n.startsWith("FROM");
     }
 
     /**
@@ -386,12 +488,16 @@ public final class DestSignals {
                     continue;
                 }
                 String n = normKey(k);
+                if (isFromKey(n)) hit.sawFrom = true;
                 if (NAME_KEYS.contains(n)) {
                     hit.name = firstNonEmpty(hit.name, asString(v));
+                    addNote(hit, k);
                 } else if (LAT_KEYS.contains(n)) {
                     hit.lat = firstNonNull(hit.lat, asDouble(v));
+                    addNote(hit, k);
                 } else if (LON_KEYS.contains(n)) {
                     hit.lon = firstNonNull(hit.lon, asDouble(v));
+                    addNote(hit, k);
                 } else {
                     walk(v, hit, depth + 1);
                 }
@@ -419,12 +525,16 @@ public final class DestSignals {
                     continue;
                 }
                 String n = normKey(k);
+                if (isFromKey(n)) hit.sawFrom = true;
                 if (NAME_KEYS.contains(n)) {
                     hit.name = firstNonEmpty(hit.name, asString(v));
+                    addNote(hit, k);
                 } else if (LAT_KEYS.contains(n)) {
                     hit.lat = firstNonNull(hit.lat, asDouble(v));
+                    addNote(hit, k);
                 } else if (LON_KEYS.contains(n)) {
                     hit.lon = firstNonNull(hit.lon, asDouble(v));
+                    addNote(hit, k);
                 } else {
                     walk(v, hit, depth + 1);
                 }
@@ -492,6 +602,7 @@ public final class DestSignals {
      * 一刀切会把语音那条也清掉，等于把「喊语音导航」这个能用功能弄坏）。
      */
     public static void endSession() {
+        dropPending();
         if (!SRC_AMAP.equals(source)) return;
         source = null;
         lastDestName = null;
@@ -604,10 +715,21 @@ public final class DestSignals {
         sb.append("  距上次更新 = ").append(lastAt == 0 ? "从未"
                 : ((System.currentTimeMillis() - lastAt) / 1000) + " 秒前").append('\n');
         sb.append("  能不能用   = ").append(usable() ? "能（会下发给 iPhone）" : "不能").append('\n');
+        sb.append("  闸门       = ").append(AmapSignals.navigating()
+                ? "车机在导航（有活路线）⇒ 广播里的目的地直接采信"
+                : "车机**不在**导航 ⇒ 只存候选，必须有活路线背书才转正").append('\n');
+        sb.append("  候选       = ").append(pendLat == null
+                ? "--（没有等着背书的候选）"
+                : (pendName + "  " + pendLat + "," + pendLon + "  等了 "
+                   + ((System.currentTimeMillis() - pendAt) / 1000) + " 秒（超 "
+                   + (PEND_TTL_MS / 1000) + " 秒丢掉）")).append('\n');
+        sb.append("  最后命中   = ").append(lastHitDesc == null ? "--" : lastHitDesc).append('\n');
 
         sb.append("  说明       = 高德广播那条是权威源：语音这条在它面前不参与\n");
         sb.append("               只有名字没有坐标的一律不采信（防止地理编码跑到别的地方）\n");
         sb.append("               GPS 上报的 lat/lon 一律不当目的地 —— 那会导致 IPA 路线乱跳\n");
+        sb.append("               目的地必须被**带活路线的引导广播**背书 —— 否则车机退出导航后,\n");
+        sb.append("               那些周期广播夹带的 POI 载荷会把 IPA 又点亮一条路线\n");
 
         sb.append("\n【命中的原始日志行（语音那条）】\n");
         synchronized (RAW) {

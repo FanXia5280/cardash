@@ -287,7 +287,7 @@ public final class BridgeRuntime {
           .append("  [").append(DestSignals.source() == null ? "-" : DestSignals.source()).append("]")
           .append(DestSignals.usable() ? "  可下发" : "  不下发")
           .append('\n');
-        // 转向灯一行（真值语义 0=亮/1=灭，见 VendorSignals.TURN_ACTIVE_VALUE）
+        // 转向灯一行（真值语义 1=灭 / ≥2=亮，见 VendorSignals.TURN_OFF_VALUE）
         Integer turn = hub.turnValue();
         String turnRaw;
         synchronized (hub.src) {
@@ -426,6 +426,10 @@ public final class BridgeRuntime {
         sb.append("\n【高德导航广播（导航数据的主力来源）】\n");
         sb.append(AmapSignals.rawSummary());
         sb.append('\n').append(AmapSignals.extrasAll());
+        // 广播类型统计：判断"车机退出导航后还在不在发广播 / 谁在夹带目的地载荷"的正解。
+        // 2026-09-25 第二轮加的（那轮的两个 bug 都缺这份数据才能一锤定音）。
+        sb.append("\n【高德广播类型统计（判断车机到底还在不在导航）】\n");
+        sb.append(AmapSignals.keyTypeStats());
         sb.append('\n').append(AmapSignals.iconCalibration());
 
         // 目的地（双来源）。

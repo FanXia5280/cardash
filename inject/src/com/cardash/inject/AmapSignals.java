@@ -79,16 +79,22 @@ public final class AmapSignals {
         //    "（还没收到过广播）" —— 而它正是用来核对 key 真名的工具。
         lastIntent = intent;
 
+        int keyType = intent.getIntExtra("KEY_TYPE", -1);
+        noteKeyType(keyType, intent);
+
         // 目的地：**每一条广播都翻一遍**（KEY_TYPE 各家版本不一样，与其猜不如全试）。
         // 用户 2026-09-24 的要求：车机上手动点导航，IPA 也要能识别目的地 ——
         // 手动导航没有语音日志，只能从高德自己的广播里拿。只读，不干扰。
+        //
+        // ⚠️ 2026-09-25 第二轮起多了一道闸门（在 DestSignals 里）：目的地必须被
+        //    **带活路线的引导广播**背书才采信。因为停车不导航时，那些周期广播
+        //    里也夹着 POI 载荷 —— 不挡的话车机早退出导航了，IPA 又会"自己开始导航"。
         try {
-            DestSignals.onAmapBroadcast(intent);
+            DestSignals.onAmapBroadcast(intent, keyType);
         } catch (Throwable t) {
             Diagnostics.log("高德目的地解析失败: " + t);
         }
 
-        int keyType = intent.getIntExtra("KEY_TYPE", -1);
         if (keyType == TYPE_GUIDE) {
             onGuide(intent);
         } else if (keyType == TYPE_STATE) {
@@ -97,22 +103,48 @@ public final class AmapSignals {
     }
 
     /**
-     * 车机高德现在是不是**真的在导航**（巡航不算 —— 巡航没有目的地）。
+     * 车机高德现在是不是**真的在导航**。
      *
-     * <p>为什么不能只看引导广播：引导信息（KEY_TYPE=10001）**巡航时也发**
-     * （见类注释）。所以「在收引导广播」≠「在导航」。判据要结合驾驶模式：
-     * 9/24/25 = 巡航 ⇒ 一定不是在导航。
+     * <p>⚠️ 2026-09-25 第二轮**重新定义**：只看**"引导广播里还有活路线"**
+     * —— 引导广播里出现了 {@code ROUTE_REMAIN_DIS / ROUTE_REMAIN_TIME > 0}，
+     * 而且是最近 {@link #GUIDE_END_MS} 内的事（见 {@link #lastLiveRouteAt}）。
      *
-     * <p>⚠️ 导航中 EXTRA_STATE 会 8 ↔ 40 每分钟翻一次（40 落到"空闲"档），
-     * 所以模式不是 1 时**要看引导广播还新不新鲜**，不能立刻判否。
+     * <p>为什么把以前两条判据都废掉（都是实车日志打脸）：
+     * <ul>
+     *   <li><b>EXTRA_STATE=8（"导航中"）不能当判据</b>：09-24 19:47~21:14 用户人在办公室、
+     *       车停着没导航，日志里「高德驾驶模式 -> 导航中 (8)」**每分钟来一次**
+     *       （和 40/315/316/2001 这些"空闲"值一对一对地刷）。拿它当判据 ⇒
+     *       车机早就退出导航了，IPA 还当在导航 —— 用户报的「车机退出导航,IPA 不退出」。</li>
+     *   <li><b>"收到过引导广播"也不能当判据</b>：引导信息（KEY_TYPE=10001）**巡航时也发**
+     *       （见类注释），所以"收到引导"≠"有一条在跑的路线"。</li>
+     * </ul>
+     *
+     * <p>而"还有多远 / 多久"只有真有一条路线时才有值 ⇒ 拿它当判据。
+     * 导航中实测引导广播每秒一条、最长断流 7 秒 ⇒ {@link #GUIDE_END_MS} 取 30 秒（4 倍余量）。
      */
     public static boolean navigating() {
-        if (mode == 2) return false;                       // 巡航：没有目的地
-        return lastGuideAt > 0 && (System.currentTimeMillis() - lastGuideAt) < GUIDE_END_MS;
+        long t = lastLiveRouteAt;
+        return t > 0 && (System.currentTimeMillis() - t) < GUIDE_END_MS;
     }
 
-    /** 引导广播断这么久 = 导航数据结束（导航中实测每秒一条，60 秒已经很宽） */
-    private static final long GUIDE_END_MS = 60000L;
+    /**
+     * 引导广播里**带活路线**（还有多远 / 多久 > 0）的最后时刻 ——
+     * 这是"车机真在导航"的唯一判据，见 {@link #navigating()}。
+     */
+    private static volatile long lastLiveRouteAt;
+
+    /** 活路线断这么久 = 导航结束（导航中实测每秒一条、最长断流 7 秒 ⇒ 30 秒有 4 倍余量） */
+    private static final long GUIDE_END_MS = 30000L;
+
+    /**
+     * 从"驾驶模式变成空闲/巡航"起，活路线已经断了这么久 ⇒ 立刻收尾，不用等满 30 秒。
+     *
+     * <p>取 20 秒的理由：EXTRA_STATE 会 8↔40 每分钟翻一次（**导航中也会**），
+     * 所以这个"快收"路径在行车途中也会被触发，必须留够余量 ——
+     * 实测引导广播最长断流 7 秒，20 秒是近 3 倍。宁可晚 10 秒收，
+     * 也绝不能因为一次隧道/重算把正在跑的导航掐掉（用户的第一要求）。
+     */
+    private static final long FAST_END_MS = 20000L;
 
     /** {@link #navigating()} 连续不成立是从什么时候开始的（0 = 现在还成立） */
     private static volatile long notNavigatingSince;
@@ -137,6 +169,10 @@ public final class AmapSignals {
             notNavigatingSince = 0;
             return;
         }
+        // 本次开机**从没出现过活路线** ⇒ 没有会话要收。
+        // ⚠️ 少了这个闸门，每次"空闲"状态变化都会打一条「导航会话结束」，
+        //    日志被刷满还容易误判（用户上一轮抓的日志里就是这样）。
+        if (lastLiveRouteAt == 0) return;
         long now = System.currentTimeMillis();
         if (notNavigatingSince == 0) {
             notNavigatingSince = now;
@@ -160,6 +196,10 @@ public final class AmapSignals {
         DestSignals.endSession();
         maxGuideGapMs = 0;
         maxGuideGapAt = 0;
+        // 活路线清零：下次必须**重新出现活路线**才算新会话。
+        // 不然"退出导航后高德还缓存着几秒旧引导"会立刻把会话又点亮。
+        lastLiveRouteAt = 0;
+        notNavigatingSince = 0;
         Diagnostics.log("导航会话结束：导航字段 + 目的地已清空");
     }
 
@@ -181,9 +221,11 @@ public final class AmapSignals {
     /**
      * 本次会话中两次引导广播之间的**最大间隔**。
      *
-     * <p>用来校准 {@link #GUIDE_END_MS}：现在取 60 秒是"宁可晚收、绝不中途掉"的保守值。
-     * 跑几趟车之后，如果这个最大值一直只有几秒（说明导航中广播很稳），
-     * 就可以把阈值降到 20~30 秒，让"车机退出导航 → IPA 自动退出"更快。
+     * <p>用来校准 {@link #GUIDE_END_MS}：2026-09-25 实车实测这个最大值只有 **7 秒**，
+     * 所以阈值已经从 60 秒收到 **30 秒**（4 倍余量），模式变空闲后走
+     * {@link #FAST_END_MS}（15 秒）更快。要是以后跑长途这个值涨到 20 秒以上，
+     * 说明高德在某些路段会长时间不发引导，那就把阈值调回去。
+     * <p>⚠️ 记的是**引导广播之间的间隔**，不再等于"活路线断流"（见 {@link #navigating()}）。
      */
     private static volatile long maxGuideGapMs;
     private static volatile long maxGuideGapAt;
@@ -227,6 +269,19 @@ public final class AmapSignals {
         lastRaw = "dist=" + dist + " icon=" + icon + " remain=" + remainDis
                 + " time=" + remainTime + " cur=" + curRoad + " next=" + nextRoad
                 + " limit=" + limit;
+
+        // ── "活路线"证据（这是"在导航"的唯一判据，见 navigating()）──
+        // "还有多远 / 多久 > 0" 只有真有一条在跑的路线时才有值：
+        //   * 导航中：实测 remain=2457 time=430（每秒一条引导）
+        //   * 巡航（没目的地）：没有路线 ⇒ 这两个字段给 -1
+        // 有了它才能区分"车机在导航"和"车机只是收到了广播"。
+        boolean live = remainDis > 0 || remainTime > 0;
+        if (live) {
+            lastLiveRouteAt = now;
+            // 有活路线了 ⇒ 把"等着被背书"的候选目的地转正
+            //（手动点导航时，目的地载荷常常比第一条引导广播早到几十毫秒）
+            DestSignals.confirmPending();
+        }
 
         // ── 导航卡片：转向距离 + 「进入 XX 路」 ──
         // 车机上高德卡片写的是「↑ 24米 进入 天高路」，其中「天高路」是
@@ -300,7 +355,10 @@ public final class AmapSignals {
                 + " (EXTRA_STATE=" + st + ")");
         StateHub hub = StateHub.get();
         hub.setSource("amap", m == 1 ? "navigating" : m == 2 ? "cruising" : "idle");
-        if (m == 0) maybeClearIfNaviEnded(hub);
+        // 只要不是"导航中"，就顺手问一句会话结束没有（巡航也算 —— 巡航没有目的地）。
+        // ⚠️ 但 EXTRA_STATE 本身不可信（停车时也每分钟发 8，见 navigating()），
+        //    所以真正说了算的是里面的"活路线断了多久"。
+        if (m != 1) maybeClearIfNaviEnded(hub);
     }
 
     /**
@@ -316,9 +374,12 @@ public final class AmapSignals {
      * （引导广播在真正导航时每秒都来，所以这个判据很稳。）
      */
     private static void maybeClearIfNaviEnded(StateHub hub) {
-        if (lastGuideAt > 0 && System.currentTimeMillis() - lastGuideAt < GUIDE_END_MS) {
-            return;                 // 还在收引导信息，那个「空闲」是假的
-        }
+        if (lastLiveRouteAt == 0) return;                 // 没有会话
+        // ⚠️ 这里用**更短的窗口** FAST_END_MS（15 秒没有活路线）：从车机上退出导航时
+        //    高德会先发这个"空闲/巡航"状态广播，早收 15 秒，用户体感差很多
+        //（用户明确要求"车机退出导航，IPA 也自动退"）。
+        //    15 秒是实测最长断流 7 秒的 2 倍余量，行车途中那点打嗝不会误判。
+        if (System.currentTimeMillis() - lastLiveRouteAt < FAST_END_MS) return;
         // ⚠️ 这条路只在"驾驶模式变化的那一刻"走一次，**不能只靠它**（漏了就永远不清，
         //    见 tick() 的注释）。真正兜底的是每 10 秒一次的 tick()。
         endSession();
@@ -332,17 +393,22 @@ public final class AmapSignals {
 
     /** 给 /logcat 用 */
     public static String rawSummary() {
+        long now = System.currentTimeMillis();
         return "  模式 = " + (mode == 1 ? "导航中" : mode == 2 ? "巡航中" : "空闲")
-                + "   （判" + (navigating() ? "在导航" : "不在导航") + "）"
+                + "（⚠️ EXTRA_STATE 本身不可信：停车不导航时也每分钟发 8）"
                 + "   距上次引导信息 = "
-                + (lastGuideAt == 0 ? "从未" : ((System.currentTimeMillis() - lastGuideAt) / 1000) + " 秒前")
+                + (lastGuideAt == 0 ? "从未" : ((now - lastGuideAt) / 1000) + " 秒前")
+                + "\n  活路线     = "
+                + (lastLiveRouteAt == 0 ? "本次开机还没有过（= 车机没在导航）"
+                        : ((now - lastLiveRouteAt) / 1000) + " 秒前")
+                + "   ← **这才是判据**：引导广播里 remain/time > 0 才算真在导航"
+                + "\n  结论       = " + (navigating() ? "车机在导航" : "车机不在导航")
+                + "（断 " + (GUIDE_END_MS / 1000) + " 秒算结束；模式变空闲后 " + (FAST_END_MS / 1000) + " 秒就收）"
                 + "\n  目的地来源 = " + (DestSignals.source() == null ? "--" : DestSignals.source())
                 + "   会话看门狗 = " + (notNavigatingSince == 0 ? "在导航/未开始"
-                        : ("不成立 " + ((System.currentTimeMillis() - notNavigatingSince) / 1000) + " 秒"))
-                + "\n  结束判据   = 引导广播断 " + (GUIDE_END_MS / 1000) + " 秒算结束"
+                        : ("不成立 " + ((now - notNavigatingSince) / 1000) + " 秒"))
                 + "   （本次导航最长断流 = "
-                + (maxGuideGapMs == 0 ? "--" : (maxGuideGapMs / 1000) + " 秒")
-                + "   ← 这个值一直很小的话可以把阈值调低）"
+                + (maxGuideGapMs == 0 ? "--" : (maxGuideGapMs / 1000) + " 秒）")
                 + "\n  最后一条 = " + lastRaw + "\n";
     }
 
@@ -354,6 +420,88 @@ public final class AmapSignals {
     /** 给 /logcat 用：最近一条引导广播的全部 extras */
     public static String extrasAll() {
         return "【最近一条引导广播的全部 extras】\n" + extrasDump();
+    }
+
+    // ─────────────────────────────────────── 广播类型统计（诊断）
+
+    /** 一种 KEY_TYPE 的统计 */
+    private static final class KStat {
+        long count;
+        long firstAt;
+        long lastAt;
+        String keys = "";
+    }
+
+    private static final java.util.LinkedHashMap<Integer, KStat> KEYTYPE =
+            new java.util.LinkedHashMap<>();
+
+    /**
+     * 记一次"收到哪种 KEY_TYPE 的广播"。
+     *
+     * <p>为什么要有这个：「车机到底还在不在导航」这件事，以前只能靠
+     * EXTRA_STATE / 引导广播间接猜，而两个都不靠谱（见 {@link #navigating()}）。
+     * 把每种 KEY_TYPE 的**条数 / 首次 / 最近 / 关键字段名**列出来，下一份日志就能
+     * 直接回答三个问题：
+     * <ol>
+     *   <li>停车、没导航时，10001（引导）**还在不在发**？</li>
+     *   <li>哪个 KEY_TYPE 在**夹带目的地载荷**（TO_POI_* 之类）？</li>
+     *   <li>高德退出导航时**有没有专门的"导航结束"广播**（有的话就能秒退，不用等 30 秒）？</li>
+     * </ol>
+     * 只记前 12 种，免得新类型无限涨。
+     */
+    private static void noteKeyType(int keyType, Intent i) {
+        if (keyType == -1) return;
+        long now = System.currentTimeMillis();
+        synchronized (KEYTYPE) {
+            KStat s = KEYTYPE.get(keyType);
+            if (s == null) {
+                if (KEYTYPE.size() >= 12) return;
+                s = new KStat();
+                s.firstAt = now;
+                s.keys = keyNames(i);
+                KEYTYPE.put(keyType, s);
+            }
+            s.count++;
+            s.lastAt = now;
+        }
+    }
+
+    /** 一条广播的 extras 字段名（最多 6 个，只给诊断看） */
+    private static String keyNames(Intent i) {
+        android.os.Bundle b = i.getExtras();
+        if (b == null || b.isEmpty()) return "(无 extras)";
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (String k : new java.util.TreeSet<>(b.keySet())) {
+            if (n++ >= 6) {
+                sb.append(" …");
+                break;
+            }
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(k);
+        }
+        return sb.toString();
+    }
+
+    /** 给 /logcat 用：广播类型统计 */
+    public static String keyTypeStats() {
+        StringBuilder sb = new StringBuilder(768);
+        long now = System.currentTimeMillis();
+        synchronized (KEYTYPE) {
+            if (KEYTYPE.isEmpty()) return "  （还没收到过高德广播）\n";
+            for (java.util.Map.Entry<Integer, KStat> e : KEYTYPE.entrySet()) {
+                KStat s = e.getValue();
+                sb.append("  KEY_TYPE=").append(e.getKey())
+                  .append("   共 ").append(s.count).append(" 条")
+                  .append("   最近 ").append((now - s.lastAt) / 1000).append(" 秒前")
+                  .append("   首次 ").append((now - s.firstAt) / 1000).append(" 秒前")
+                  .append("\n      字段: ").append(s.keys)
+                  .append('\n');
+            }
+        }
+        sb.append("  ⚠️ 看这张表就能断定：车机停车/退出导航后 10001（引导）还在不在发、\n");
+        sb.append("     哪个类型在夹带目的地载荷(TO_POI_*/NAVI_INFO)、有没有\"导航结束\"广播。\n");
+        return sb.toString();
     }
 
     // ─────────────────────────────────────── 转向图标

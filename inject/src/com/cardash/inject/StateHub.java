@@ -59,26 +59,43 @@ public final class StateHub {
     public volatile Integer cameraType;
     public volatile Integer cameraSpeed;
 
-    // ── 转向灯（左右分开 + 合并状态，三个槽位，见 turnValue 的归一化）──
-    /** 左转向灯亮着吗（null = 这个别名没在推数据） */
-    public volatile Boolean turnLeft;
-    /** 右转向灯亮着吗 */
-    public volatile Boolean turnRight;
+    // ── 转向灯（左右分开，见 turnValue 的"保持"逻辑）──
+    /** 左转向灯**最近一次"亮"**是什么时候（0 = 从没见过亮）。见 {@link #TURN_HOLD_MS} */
+    public volatile long turnLeftOnAt;
+    /** 右转向灯最近一次"亮"是什么时候 */
+    public volatile long turnRightOnAt;
+    /** 这个别名推过数据吗（推过但最近没亮 ⇒ 显示"灭"；从没推过 ⇒ 整个转向灯不显示） */
+    public volatile boolean turnLeftSeen;
+    public volatile boolean turnRightSeen;
     /** 合并状态（D.apk 的「灯光 / 转向灯状态」原值，可能是 0/1/2/3 枚举） */
     public volatile Integer turnStatus;
 
     /**
+     * 转向灯"亮"的保持时间。
+     *
+     * <p>⚠️ 车机的转向灯属性**是跟着灯泡一起闪的**（实测 1↔2 每秒跳两三次，
+     * 见 {@code VendorSignals.TURN_OFF_VALUE}）。直接把某一帧的值发出去，
+     * iPhone 250ms 轮询到的就是随机 on/off —— 一闪一闪地抖，而不是稳定的
+     * "左转灯亮着"。所以这里做保持：**最近 2.5 秒内见过"亮"就算亮着**；
+     * 灯关掉后属性停在"灭"（1）不再更新，2.5 秒后自然收掉。
+     */
+    private static final long TURN_HOLD_MS = 2500L;
+
+    /**
      * 归一化转向灯：**0=灭 1=左 2=右 3=双闪**，null = 完全没数据（iPhone 就别显示）。
      *
-     * 为什么在这里算而不是在采集端：左灯、右灯是两个独立别名，到达顺序不定
-     * （左灯先推 0、右灯后推 1）。分开存、最后统一算，结果才与顺序无关。
+     * <p>为什么在这里算而不是在采集端：左灯、右灯是两个独立别名，到达顺序不定。
+     * 分开存、最后统一算，结果才与顺序无关。
      */
     public Integer turnValue() {
         if (turnStatus != null) return turnStatus;
-        if (Boolean.TRUE.equals(turnLeft) && Boolean.TRUE.equals(turnRight)) return 3;
-        if (Boolean.TRUE.equals(turnLeft)) return 1;
-        if (Boolean.TRUE.equals(turnRight)) return 2;
-        if (turnLeft != null || turnRight != null) return 0;
+        long now = System.currentTimeMillis();
+        boolean l = turnLeftOnAt > 0 && (now - turnLeftOnAt) < TURN_HOLD_MS;
+        boolean r = turnRightOnAt > 0 && (now - turnRightOnAt) < TURN_HOLD_MS;
+        if (l && r) return 3;
+        if (l) return 1;
+        if (r) return 2;
+        if (turnLeftSeen || turnRightSeen) return 0;
         return null;
     }
 

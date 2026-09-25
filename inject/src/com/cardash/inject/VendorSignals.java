@@ -78,30 +78,43 @@ public final class VendorSignals {
      * **车机根本不推** —— 所以转向灯/双闪一直没数据（/state 里 turn 恒为 null、
      * iPhone 两边不冒绿光）。别改回去。
      *
-     * ⚠️⚠️ **真值语义（2026-09-25 实车定案）：0 = 灯亮、1 = 灯灭** ——
-     * 和别名名字的字面意思**相反**，见 {@link #TURN_ACTIVE_VALUE}。
+     * ⚠️⚠️ **真值语义（2026-09-25 第二轮实车定案）：1 = 灯灭、2 = 灯亮** ——
+     * 见 {@link #TURN_OFF_VALUE}。
      */
     private static final String A_TURN_L     = "vc_alias_turn_left_signal_on";
     private static final String A_TURN_R     = "vc_alias_turn_right_signal_on";
 
     /**
-     * 转向灯别名里"这盏灯亮着"对应的原始值。
+     * 转向灯原始值的真值语义：**1 = 灭、≥ 2 = 亮**（2026-09-25 第二轮实车定案）。
      *
-     * <p>⚠️ **0 = 亮、1 = 灭**（不是 1 = 亮！）。证据是用户车上的属性全量扫描
-     * （2026-09-25 日志二）：车上**没有**打转向灯时
+     * <p>证据一（灭）：2026-09-25 第一轮属性全量扫描，**没打灯**时
      * <pre>
      *   vc_alias_turn_left_signal_on  = 1
      *   vc_alias_turn_right_signal_on = 1
      * </pre>
-     * 按"1=亮"解释 ⇒ 两个都为真 ⇒ {@code turnValue()} = 3（双闪）
-     * ⇒ iPhone 两边绿光**从连上车机起就一直闪**（用户实测报的就是这个）。
-     * 按 0=亮 解释就对得上：全灭 = 1/1、左亮 = 0/1、右亮 = 1/0、双闪 = 0/0。
      *
-     * <p>要改回"1=亮"就把这一个常量改成 1 —— **只有这一处**。
-     * 真值语义只能靠真车实测决定，别再照别名名字猜：这个功能已经猜错过两次
-     * （第一次猜 {@code Light/Turn*} 别名名、第二次猜 1=亮）。
+     * <p>证据二（亮、而且在闪）：2026-09-25 11:47:30 用户在车上打灯，
+     * /logcat 的「转向灯（原始值变化历史）」原始记录：
+     * <pre>
+     *   11:47:30   left = 2      11:47:30   right = 2
+     *   11:47:30   left = 1      11:47:30   right = 1
+     *   11:47:31   left = 2      11:47:31   right = 2
+     *   …（1 ↔ 2 反复跳，一秒两三次 —— 属性是跟着灯泡一起闪的）
+     * </pre>
+     *
+     * <p>⇒ 灭时**只会**是 1；亮时是 2（并且随闪动在 1/2 之间跳）。
+     * 上一版按"0 = 亮"实现，而打灯时值是 2 ⇒ 判成"什么都不亮"，
+     * 于是用户报「打左转 / 右转 / 双闪都没生效」。
+     *
+     * <p>⚠️ 值本身在闪，**不能**当布尔直接下发（iPhone 250ms 轮询会抽到随机的
+     * on/off，看着就是抖）—— 保持逻辑在 {@link StateHub#turnValue()}。
+     *
+     * <p>这个功能已经猜错两次（第一次猜 {@code Light/Turn*} 别名名、第二次猜 0=亮）。
+     * 真值语义**只能**靠真车实测定，别再照别名名字或"0/1 二进制"的直觉猜。
      */
-    private static final int TURN_ACTIVE_VALUE = 0;
+    private static final int TURN_OFF_VALUE = 1;
+    /** 亮 = **≥ 2**（实测打灯时是 2；0 / 负数从没见过，按"不表态"处理，见 turnActive） */
+    private static final int TURN_ON_MIN = 2;
 
     /**
      * 续航候选别名，按优先级从高到低。
@@ -754,26 +767,34 @@ public final class VendorSignals {
     }
 
     /**
-     * 转向灯：把原始值写进 StateHub 的三个槽位（左灯 / 右灯 / 合并状态）。
+     * 转向灯：把原始值写进 StateHub 的槽位。
      *
-     * 归一化成「0=灭 1=左 2=右 3=双闪」这一步**不在这里做**，而是放在
-     * StateHub.turnValue() 里算 —— 因为左灯和右灯是两个独立的别名，
-     * 分开到达（左灯先推 0、右灯后推 1）时如果在这里就归一化，
-     * 后到的「0」会把先到的方向覆盖掉。分开存、最后算，才与到达顺序无关。
+     * <p>⚠️ 这里写的是**"最近一次亮是什么时候"（时间戳）**，不是布尔 ——
+     * 车机属性跟着灯泡闪（1↔2，每秒两三次），布尔会把闪动原样透给 iPhone，
+     * 250ms 轮询抽到的就是随机 on/off。归一化成「0=灭 1=左 2=右 3=双闪」
+     * 放在 {@link StateHub#turnValue()} 里做，那里带 2.5 秒保持。
+     *
+     * <p>左右分开存、最后统一算 ⇒ 与两条别名的到达顺序无关
+     * （左灯先到、右灯后到都不会互相覆盖）。
      */
     private static boolean applyTurn(StateHub hub, String alias, Object raw) {
-        hub.setSource("turnRaw", alias + "=" + String.valueOf(raw));
         recordTurn(alias, raw);
         if (A_TURN_L.equals(alias)) {
+            lastTurnLeftRaw = raw == null ? null : String.valueOf(raw);
+            refreshTurnRaw(hub);
             Boolean b = turnActive(raw);
-            if (b == null) return false;
-            hub.turnLeft = b;
+            if (b == null) return false;          // 没见过的值：只记历史，不改状态
+            hub.turnLeftSeen = true;
+            if (b) hub.turnLeftOnAt = System.currentTimeMillis();
             return true;
         }
         if (A_TURN_R.equals(alias)) {
+            lastTurnRightRaw = raw == null ? null : String.valueOf(raw);
+            refreshTurnRaw(hub);
             Boolean b = turnActive(raw);
             if (b == null) return false;
-            hub.turnRight = b;
+            hub.turnRightSeen = true;
+            if (b) hub.turnRightOnAt = System.currentTimeMillis();
             return true;
         }
         Double d = num(raw);
@@ -789,16 +810,40 @@ public final class VendorSignals {
         return false;
     }
 
+    /** 左 / 右别名的最近原始值（只给诊断用 —— 两个值一起看才知道是左、右还是双闪） */
+    private static volatile String lastTurnLeftRaw;
+    private static volatile String lastTurnRightRaw;
+
+    /**
+     * 把左右**两个**原始值一起写进诊断。
+     *
+     * ⚠️ 以前只显示"最后到达的那一个"，而左灯右灯是两个独立别名、先后到达，
+     * 所以诊断里永远只看到一个值（用户上一轮的 `turnRaw` 就只有 right）
+     * —— 定不了"到底是左还是右"。两个一起显示才看得出来。
+     */
+    private static void refreshTurnRaw(StateHub hub) {
+        hub.setSource("turnRaw", "left=" + (lastTurnLeftRaw == null ? "?" : lastTurnLeftRaw)
+                + " right=" + (lastTurnRightRaw == null ? "?" : lastTurnRightRaw));
+    }
+
     /**
      * 原始值 → 「这盏灯现在亮着吗」。
      *
-     * ⚠️ 判据是 {@link #TURN_ACTIVE_VALUE}（**0 = 亮、1 = 灭**），不是"非零即真"。
-     * 取不出来返回 null（表示"这个别名没在推数据"，不能用它判断灯灭）。
+     * <p>判据：{@link #TURN_OFF_VALUE}（1）= 灭、{@link #TURN_ON_MIN}（≥2）= 亮。
+     *
+     * <p>没见过的值（0 / 负数）返回 null ⇒ 调用方**保持上一次状态、不刷新时间戳**，
+     * 于是"没有灯"会在 2.5 秒后自然收掉。宁可少亮，也不能像第一轮那样
+     * 「从连上车机起两边一直闪」。
      */
     private static Boolean turnActive(Object raw) {
         if (raw == null) return null;
         Double d = num(raw);
-        if (d != null) return d.intValue() == TURN_ACTIVE_VALUE;
+        if (d != null) {
+            int v = d.intValue();
+            if (v == TURN_OFF_VALUE) return false;
+            if (v >= TURN_ON_MIN) return true;
+            return null;
+        }
         if (raw instanceof Boolean) return (Boolean) raw;   // 本车没出现过这种形态
         String s = String.valueOf(raw).trim();
         if (s.isEmpty() || "null".equalsIgnoreCase(s)) return null;
@@ -845,9 +890,10 @@ public final class VendorSignals {
     /** 给 /logcat 用 */
     public static String turnLogText() {
         StringBuilder sb = new StringBuilder(1024);
-        sb.append("  当前语义 = 原始值 ").append(TURN_ACTIVE_VALUE)
-          .append(" 当成\"灯亮\"（0=亮 / 1=灭，2026-09-25 实车定案）\n");
-        sb.append("  说明     = 打一次左 / 右 / 双闪 / 关掉，看下面的变化记录就能定案\n");
+        sb.append("  当前语义 = 原始值 ").append(TURN_OFF_VALUE).append(" 当成\"灯灭\"、≥ ")
+          .append(TURN_ON_MIN).append(" 当成\"灯亮\"（1=灭 / 2=亮，2026-09-25 第二轮实车定案）\n");
+        sb.append("  下发前   = 有 2.5 秒保持（属性跟着灯泡闪，1↔2 反复跳，直接发会抖）\n");
+        sb.append("  说明     = 打一次左 / 右 / 双闪 / 关掉，看下面的变化记录就能核对\n");
         synchronized (TURN_LOG) {
             if (TURN_LOG.isEmpty()) {
                 sb.append("  （还没收到转向灯别名）\n");
