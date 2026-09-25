@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  独立包（solo）的清单 —— 这个包**不注入任何东西**，是独立安装、独立运行的。
+
+  目的：验证"完全脱离 D.apk、自己绑厂商 SDK"这条路能不能走通。三件事：
+    1. 用**平台签名**签它 ⇒ 车机管家应该同样识别成"拥有系统签名"（用户截图那条）
+    2. 声明 sharedUserId 把 uid 定到 system（1000）⇒ 能不能加入 system uid
+       ⚠️ Android 14 对"新装应用加入 system uid"可能有额外限制 —— 这正是要测的。
+          构建脚本带 no-uid 开关时会去掉这一行，出对照包（装不上就对比着装这个）。
+    3. 组件声明 android:process="com.deepalhome.launcher" ⇒ 能不能附进桌面进程
+         （能的话就能"继续用桌面的类"；这一步先不声明，等①②过了再说）
+
+  ⚠️ 包名故意用 com.cardash.solo，和桌面包名（com.deepalhome.launcher）完全无关，
+     不会影响桌面、也不会影响插件市场的订阅校验。装坏了直接卸载即可。
+  ⚠️ XML 注释里不能出现连续两个减号，所以下面提到命令行开关时都写成文字形式。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.cardash.solo"
+    android:versionCode="1"
+    android:versionName="1.0-solo"
+    android:sharedUserId="android.uid.system">
+
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="34" />
+
+    <!-- 只读 HTTP，给手机浏览器看报告用 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 11+ 要列别人的包/服务必须声明，否则只能看到自己 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- 读 logcat：只有 system uid / 平台签名能给（这条就是"要不要 system uid"的试纸） -->
+    <uses-permission android:name="android.permission.READ_LOGS" />
+
+    <application
+        android:label="@string/app_name"
+        android:allowBackup="false"
+        android:hardwareAccelerated="true">
+        <activity
+            android:name=".SoloActivity"
+            android:label="@string/app_name"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
