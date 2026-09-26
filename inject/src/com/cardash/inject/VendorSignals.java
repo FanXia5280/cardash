@@ -1031,6 +1031,23 @@ public final class VendorSignals {
         String rl = strField(cache, "tirePressureRearLeft");
         String rr = strField(cache, "tirePressureRearRight");
 
+        // 兜底（2026-09-26）：有底包把四个胎压存成**数组**（日志诊断里看到
+        // `[Ljava.lang.Integer;@…`），上面四个 String 字段根本不存在 ⇒ 全是 null
+        // ⇒ iPhone 胎压页四个轮子一直 "--"。这里去缓存对象上找名字带 tire/press
+        // 的数组字段，取前四个值；数值按「>=100 当 kPa 除 100」折成 bar 字符串
+        //（iPhone 端不做换算，只原样显示，见 TireInfo 的注释）。
+        String src = "cache";
+        if (fl == null && fr == null && rl == null && rr == null) {
+            String[] four = findTireArray(cache);
+            if (four != null) {
+                fl = four[0];
+                fr = four[1];
+                rl = four[2];
+                rr = four[3];
+                src = "array";
+            }
+        }
+
         hub.tireFl = fl;
         hub.tireFr = fr;
         hub.tireRl = rl;
@@ -1039,11 +1056,127 @@ public final class VendorSignals {
         if (fl != null || fr != null || rl != null || rr != null) {
             hub.tireSeen = true;
             hub.tireAt = System.currentTimeMillis();
-            hub.setSource("tire", "cache:"
-                    + fl + "/" + fr + "/" + rl + "/" + rr);
+            hub.setSource("tire", src + ":" + fl + "/" + fr + "/" + rl + "/" + rr);
         } else {
             hub.setSource("tire", hub.tireSeen ? "cache:空(曾收到过)" : "cache:无此字段");
         }
+        // 只读地把缓存对象的字段名/类型列出来 —— 下次再换底包，一眼就能看出
+        // 胎压到底叫什么、是什么类型，不用再来回猜。
+        hub.setSource("tireFields", describeTireFields(cache));
+    }
+
+    /** 在缓存对象（含父类）上找名字带 tire/press 的数组字段，取前四个值。 */
+    private static String[] findTireArray(Object cache) {
+        Class<?> c = cache.getClass();
+        int guard = 0;
+        while (c != null && c != Object.class && guard++ < 6) {
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                String n = f.getName().toLowerCase(java.util.Locale.US);
+                if (!n.contains("tire") && !n.contains("press")) continue;
+                try {
+                    f.setAccessible(true);
+                    String[] four = fourTireValues(f.get(cache));
+                    if (four != null) return four;
+                } catch (Throwable ignored) {
+                    // 读不到就换下一个字段
+                }
+            }
+            c = c.getSuperclass();
+        }
+        return null;
+    }
+
+    /** 把一个字段值变成四个胎压字符串；不是"能凑出四个胎压"的形状就返回 null。 */
+    private static String[] fourTireValues(Object v) {
+        if (v == null) return null;
+        String[] out = new String[4];
+        if (v instanceof Object[]) {
+            Object[] a = (Object[]) v;
+            if (a.length < 4) return null;
+            for (int i = 0; i < 4; i++) out[i] = tireValueOf(a[i]);
+        } else if (v instanceof int[]) {
+            int[] a = (int[]) v;
+            if (a.length < 4) return null;
+            for (int i = 0; i < 4; i++) out[i] = tireNum(a[i]);
+        } else if (v instanceof float[]) {
+            float[] a = (float[]) v;
+            if (a.length < 4) return null;
+            for (int i = 0; i < 4; i++) out[i] = tireNum(a[i]);
+        } else if (v instanceof double[]) {
+            double[] a = (double[]) v;
+            if (a.length < 4) return null;
+            for (int i = 0; i < 4; i++) out[i] = tireNum(a[i]);
+        } else if (v instanceof long[]) {
+            long[] a = (long[]) v;
+            if (a.length < 4) return null;
+            for (int i = 0; i < 4; i++) out[i] = tireNum(a[i]);
+        } else {
+            return null;
+        }
+        boolean any = false;
+        for (String s : out) {
+            if (s != null) any = true;
+        }
+        return any ? out : null;
+    }
+
+    private static String tireValueOf(Object o) {
+        if (o == null) return null;
+        if (o instanceof Number) return tireNum(((Number) o).doubleValue());
+        String s = String.valueOf(o).trim();
+        if (s.isEmpty() || "null".equalsIgnoreCase(s)) return null;
+        try {
+            return tireNum(Double.parseDouble(s));
+        } catch (Throwable e) {
+            return s;
+        }
+    }
+
+    /** 数值 → bar 字符串：>=100 当成 kPa 除 100；否则原样（两位小数）。 */
+    private static String tireNum(double v) {
+        if (v <= 0) return null;
+        double bar = v >= 100 ? v / 100.0 : v;
+        return String.format(java.util.Locale.US, "%.2f", bar);
+    }
+
+    /** 只读：把缓存对象里名字带 tire/press 的字段列成 "名:类型=值" 供 /diag 看。 */
+    private static String describeTireFields(Object cache) {
+        if (cache == null) return "cache=null";
+        StringBuilder sb = new StringBuilder(120);
+        Class<?> c = cache.getClass();
+        int guard = 0;
+        while (c != null && c != Object.class && guard++ < 6) {
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                String n = f.getName();
+                String ln = n.toLowerCase(java.util.Locale.US);
+                if (!ln.contains("tire") && !ln.contains("press")) continue;
+                String ty = f.getType().getSimpleName();
+                String val;
+                try {
+                    f.setAccessible(true);
+                    Object o = f.get(cache);
+                    if (o instanceof Object[]) {
+                        val = java.util.Arrays.toString((Object[]) o);
+                    } else if (o instanceof int[]) {
+                        val = java.util.Arrays.toString((int[]) o);
+                    } else if (o instanceof float[]) {
+                        val = java.util.Arrays.toString((float[]) o);
+                    } else if (o instanceof double[]) {
+                        val = java.util.Arrays.toString((double[]) o);
+                    } else {
+                        val = String.valueOf(o);
+                    }
+                } catch (Throwable e) {
+                    val = "<?>";
+                }
+                if (val != null && val.length() > 40) val = val.substring(0, 40);
+                if (sb.length() > 0) sb.append(" | ");
+                sb.append(n).append(':').append(ty).append('=').append(val);
+                if (sb.length() > 300) break;
+            }
+            c = c.getSuperclass();
+        }
+        return sb.length() == 0 ? "（没有带 tire/press 的字段）" : sb.toString();
     }
 
     /** 反射读一个 String 字段，取不到/为空都返回 null（不抛）。 */

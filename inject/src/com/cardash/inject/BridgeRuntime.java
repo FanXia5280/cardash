@@ -367,6 +367,24 @@ public final class BridgeRuntime {
             // 知道导航包名但不想等重新打包时，直接加，立刻生效并持久化
             return NaviSignals.addPackage(query);
         }
+        if ("/setwrite".equals(path)) {
+            // 只读总开关：默认只读（只采集，不向车机下发任何指令）。
+            boolean on = query != null && query.contains("on=1");
+            ReadOnly.enabled = !on;
+            return "向下发指令（写设置 / IPC 查终点 / HUD 补发） = "
+                    + (on ? "允许（非只读）" : "禁止（只读，默认）")
+                    + "\n默认只读：桥接只做采集，不写 Settings、不查导航 IPC、不补发 HUD 指令。\n";
+        }
+        if ("/setprobe".equals(path)) {
+            // 临时开关「主动查终点」探针。默认关 —— 开着它时，车机语音退出导航后
+            // 深蓝定制版高德会隔几十秒自动重新开始导航上次的目的地（2026-09-26 实测）。
+            boolean on = query != null && query.contains("on=1");
+            S05Navi.probeEnabled = on;
+            return "S05Navi 主动查终点 = " + (on
+                    ? "开（30 秒限流，会真的去 IPC 查终点）"
+                    : "关（默认）")
+                    + "\n开着它时，退出导航后定制高德可能自动重开导航，测完记得 /setprobe?on=0\n";
+        }
         if ("/log".equals(path)) {
             return Diagnostics.tail(64 * 1024);
         }

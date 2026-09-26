@@ -90,6 +90,19 @@ public final class S05Navi {
     public static volatile String lastError;
 
     private static volatile long lastPollAt;
+    /**
+     * 「主动查终点」总开关 —— 2026-09-26 起**默认关闭**。
+     *
+     * 为什么要关：这个探针不是纯查询。车机语音退出导航后，只要它每 30 秒去 IPC
+     * 问一次「当前路线终点」，**深蓝定制版高德（com.wt.mahjong）就会隔几十秒
+     * 重新开始导航上次那个目的地**（用户 2026-09-26 实测，239 / 241 两个版本都复现；
+     * 原车导航不受影响，只有定制高德会重开；30 秒正好等于这里的限流间隔）。
+     *
+     * 它本来只是挖 D.apk 字段格式用的探测器，目的已经达到 ⇒ 默认关掉。
+     * 真要再看那些字段：/setprobe?on=1 临时打开（重启桌面恢复默认关）。
+     */
+    public static volatile boolean probeEnabled = false;
+
     private static volatile long lastProbeAt;
     private static volatile String probeNote = "还没触发";
 
@@ -282,6 +295,10 @@ public final class S05Navi {
      * 由 /diag、/logcat 触发（30 秒限流），不要在轮询里调，免得刷屏。
      */
     public static void probeDestination(String trigger) {
+        if (!probeEnabled) {
+            probeNote = "已关闭（默认关：它会让定制高德退出导航后自动重开导航；开：/setprobe?on=1）";
+            return;
+        }
         resolve();
         long now = System.currentTimeMillis();
         if (now - lastProbeAt < PROBE_MIN_GAP_MS) {

@@ -47,6 +47,25 @@ public final class HudRuntime {
     private HudRuntime() {
     }
 
+    /**
+     * 确保运行时已经起来（面板里 HUD 开关 / 模拟 / 镜像开关变化时调，重复调用无害）。
+     *
+     * 真正的启动入口是 {@link #bootstrap(Application)}（由 LanternEntry/HudEntry 在
+     * 桌面进程启动时调一次，内部有 bootstrapped 去重）；面板手里只有普通 Context，
+     * 所以这里兜一层：取 applicationContext 再 bootstrap 一次 + 立刻刷新数据。
+     */
+    public static void ensureAlive(Context ctx) {
+        try {
+            Context app = ctx.getApplicationContext();
+            if (app instanceof Application) {
+                bootstrap((Application) app);
+            }
+            refresh(ctx);
+        } catch (Throwable t) {
+            AppLog.i(TAG, "ensureAlive 失败: " + t);
+        }
+    }
+
     /** 桌面进程启动时调用一次（幂等）。 */
     public static void bootstrap(Application app) {
         if (app == null || bootstrapped) {
@@ -186,6 +205,10 @@ public final class HudRuntime {
 
     /** 延迟补发一次 HUD 开屏指令（给车机一点时间处理退出导航的收尾）。 */
     public static void wakeHudLater(Context ctx, long delayMs) {
+        if (!allowWriteSoft()) {
+            AppLog.i(TAG, "只读模式：跳过补发 HUD 开屏");
+            return;
+        }
         final Context app = ctx.getApplicationContext();
         MAIN.postDelayed(new Runnable() {
             @Override
@@ -198,6 +221,10 @@ public final class HudRuntime {
 
     /** 延迟把 HUD 叠加窗重新置顶（D 桌面的歌词窗口可能盖住我们）。 */
     public static void bringFrontLater(Context ctx, long delayMs) {
+        if (!allowWriteSoft()) {
+            AppLog.i(TAG, "只读模式：跳过把 HUD 窗口置顶");
+            return;
+        }
         MAIN.postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -215,6 +242,10 @@ public final class HudRuntime {
      * （原服务 bounceHudSwitch/chainBounce 的等价物，去掉了 startService）。
      */
     public static void bounceHudSwitch(final Context ctx) {
+        if (!allowWriteSoft()) {
+            AppLog.i(TAG, "只读模式：跳过开关一次 HUD");
+            return;
+        }
         final Context app = ctx.getApplicationContext();
         if (!Prefs.isHudEnabled(app)) {
             return;
@@ -260,4 +291,20 @@ public final class HudRuntime {
             }
         }, delay);
     }
+
+    /**
+     * 是否允许向车机下发指令。软引用桥接的只读开关（{@code com.cardash.inject.ReadOnly}）：
+     * 独立 App 里没有那个类 ⇒ 走 catch 分支，保持原行为（允许），
+     * 这样同一份源码给公司内置时不受影响。
+     */
+    private static boolean allowWriteSoft() {
+        try {
+            Class<?> c = Class.forName("com.cardash.inject.ReadOnly");
+            Object v = c.getField("enabled").get(null);
+            return !Boolean.TRUE.equals(v);
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
 }

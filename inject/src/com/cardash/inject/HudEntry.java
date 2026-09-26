@@ -65,7 +65,7 @@ public final class HudEntry {
 
         // ① 保活：HUD 运行时跟着桌面进程常驻（收高德广播 + 画 HUD 副屏 + 看门狗）
         try {
-            HudRuntime.start(app);
+            HudRuntime.bootstrap(app);
             Diagnostics.log("HUD 红绿灯保活已挂上（跟随桌面进程）");
         } catch (Throwable t) {
             Diagnostics.log("HUD 红绿灯保活启动失败: " + t);

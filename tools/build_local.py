@@ -163,12 +163,24 @@ def main():
                     srcs.append(os.path.join(base, f))
     say('\n源文件 %d 个（桥接 + 内置氛围灯 + 内置 HUD 红绿灯）' % len(srcs))
 
-    ok, _ = run('javac 编译', [javac, '--release', '11', '-encoding', 'UTF-8',
-                              '-classpath', ajar, '-d', os.path.join(build, 'classes')] + srcs)
+    # 源文件多了以后，把所有路径直接拼在命令行上会撞 Windows 的 32K 命令行上限
+    # （2026-09-26：三棵树合起来上百个文件，报 WinError 206「文件名或扩展名太长」）。
+    # javac 支持 @argfile，把参数写文件传进去 —— 顺手把 d8 那步也一起用。
+    argfile = os.path.join(build, 'javac_args.txt')
+    with open(argfile, 'w', encoding='utf-8') as af:
+        af.write('--release\n11\n-encoding\nUTF-8\n-classpath\n' + ajar
+                 + '\n-d\n' + os.path.join(build, 'classes') + '\n')
+        for s in srcs:
+            af.write(s + '\n')
+
+    ok, _ = run('javac 编译', [javac, '@' + argfile])
     if not ok:
-        run('javac 编译（回退到默认 release）',
-            [javac, '-encoding', 'UTF-8', '-classpath', ajar,
-             '-d', os.path.join(build, 'classes')] + srcs)
+        with open(argfile, 'w', encoding='utf-8') as af:
+            af.write('-encoding\nUTF-8\n-classpath\n' + ajar
+                     + '\n-d\n' + os.path.join(build, 'classes') + '\n')
+            for s in srcs:
+                af.write(s + '\n')
+        run('javac 编译（回退到默认 release）', [javac, '@' + argfile])
     if FAILED:
         return
 
@@ -178,10 +190,15 @@ def main():
             if f.endswith('.class'):
                 classes.append(os.path.join(base, f))
 
-    # ── 2. d8
+    # ── 2. d8（同样走 argfile：上百个 .class 拼命令行也会 WinError 206）
+    d8arg = os.path.join(build, 'd8_args.txt')
+    with open(d8arg, 'w', encoding='utf-8') as af:
+        af.write('--release\n--min-api\n30\n--lib\n' + ajar
+                 + '\n--output\n' + os.path.join(build, 'dex') + '\n')
+        for c in classes:
+            af.write(c + '\n')
     ok, _ = run('d8 转 dex', [java, '-cp', os.path.join(bt, 'lib', 'd8.jar'),
-                             'com.android.tools.r8.D8', '--release', '--min-api', '30',
-                             '--lib', ajar, '--output', os.path.join(build, 'dex')] + classes)
+                             'com.android.tools.r8.D8', '@' + d8arg])
     if FAILED:
         return
     injected = os.path.join(build, 'injected.dex')

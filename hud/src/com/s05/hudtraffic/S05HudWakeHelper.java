@@ -89,6 +89,7 @@ public final class S05HudWakeHelper {
 
     /** 写入车辆 HUD 设置：HUD 开关 + HUD 导航显示，与 D 应用一致。 */
     public static boolean enableVehicleHudSetting() {
+        if (!allowWriteSoft()) return false;    // 只读：不改车机 HUD 设置
         boolean ok = false;
         try {
             Class<?> cls = Class.forName(VEHICLE_SETTING_MANAGER);
@@ -143,6 +144,7 @@ public final class S05HudWakeHelper {
      * @return 结果描述，便于在界面/日志里判断哪一步失败
      */
     public static String sendDipStatus(int code) {
+        if (!allowWriteSoft()) return "read-only";   // 只读：不发 DIP 指令
         IBinder binder = getDipBinder();
         if (binder == null) {
             return "跳过(未取到 IDoubleInteractiveProxy)";
@@ -165,6 +167,7 @@ public final class S05HudWakeHelper {
 
     /** 发高德 {@code KEY_TYPE=10019 / EXTRA_STATE=8} 广播，与 D 应用一致。 */
     public static String sendAmapHudStart() {
+        if (!allowWriteSoft()) return "read-only";   // 只读：不发广播唤 HUD
         Context ctx = appContext;
         if (ctx == null) {
             return "跳过(无 Context)";
@@ -188,6 +191,7 @@ public final class S05HudWakeHelper {
      * 500ms 内不重复触发。
      */
     public static void fullWakeHud(Context ctx) {
+        if (!allowWriteSoft()) return;          // 只读：不唤醒 HUD
         if (ctx != null) {
             setAppContext(ctx);
         }
@@ -209,6 +213,23 @@ public final class S05HudWakeHelper {
 
     /** 兼容旧调用点。 */
     public static void wakeHud() {
+        if (!allowWriteSoft()) return;          // 只读：不唤醒 HUD
         fullWakeHud(appContext);
     }
+
+    /**
+     * 是否允许向车机下发指令。软引用桥接的只读开关（com.cardash.inject.ReadOnly）：
+     * 独立 App 里没有那个类 ⇒ catch 分支，保持原行为（允许）。
+     */
+    private static boolean allowWriteSoft() {
+        try {
+            Class<?> c = Class.forName("com.cardash.inject.ReadOnly");
+            Object v = c.getField("enabled").get(null);
+            return !Boolean.TRUE.equals(v);
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
 }
+

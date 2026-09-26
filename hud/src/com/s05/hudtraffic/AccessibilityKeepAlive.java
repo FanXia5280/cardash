@@ -58,6 +58,7 @@ public final class AccessibilityKeepAlive {
      * 车机系统应用可直接自启用；普通应用会抛 SecurityException，返回 false。
      */
     public static boolean tryEnableViaSecureSettings(Context ctx) {
+        if (!allowWriteSoft()) return false;   // 只读：不写 Settings.Secure
         if (!hasWriteSecureSettings(ctx)) {
             AppLog.i(TAG, "无 WRITE_SECURE_SETTINGS 权限，需手动开启无障碍");
             return false;
@@ -86,6 +87,7 @@ public final class AccessibilityKeepAlive {
 
     /** 打开系统无障碍设置页；部分车机没有该页面，退回应用详情页。 */
     public static void openSettings(Context ctx) {
+        if (!allowWriteSoft()) return;          // 只读：不跳系统设置页
         try {
             Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -115,4 +117,20 @@ public final class AccessibilityKeepAlive {
         }
         return "未开启";
     }
+
+    /**
+     * 是否允许向车机下发指令。软引用桥接的只读开关（com.cardash.inject.ReadOnly）：
+     * 独立 App 里没有那个类 ⇒ catch 分支，保持原行为（允许）。
+     */
+    private static boolean allowWriteSoft() {
+        try {
+            Class<?> c = Class.forName("com.cardash.inject.ReadOnly");
+            Object v = c.getField("enabled").get(null);
+            return !Boolean.TRUE.equals(v);
+        } catch (Throwable ignored) {
+            return true;
+        }
+    }
+
 }
+
