@@ -299,8 +299,11 @@ struct TirePressurePanel: View {
     let tire: TireInfo?
     let scale: CGFloat
 
-    private var w: CGFloat { scale * 178 }
-    private var h: CGFloat { scale * 146 }
+    /// ⚠️ 2026-09-26 用户反馈「胎压和时速大小不一样、切换很生硬」⇒
+    /// 这里改成**和 `SpeedSlot` 两页共用的内容框完全一致**（300×176），
+    /// 并且把车底盘/读数一起放大撑满它 —— 这样切换时外框不跳、观感也一致。
+    private var w: CGFloat { scale * 300 }
+    private var h: CGFloat { scale * 176 }
 
     var body: some View {
         ZStack {
@@ -326,8 +329,8 @@ struct TirePressurePanel: View {
     /// 透明车底盘：**只描边、不填充**，车头朝上。
     /// 前挡风 / 后窗各画一条弧线 —— 光看轮廓也能认出哪头是车头。
     private var chassis: some View {
-        let bw = w * 0.36
-        let bh = h * 0.64
+        let bw = w * 0.22
+        let bh = h * 0.68
         return ZStack {
             RoundedRectangle(cornerRadius: bw * 0.30, style: .continuous)
                 .stroke(Color.white.opacity(0.34), lineWidth: max(1, scale * 1.6))
@@ -357,16 +360,16 @@ struct TirePressurePanel: View {
         if let t = tire { v = t.value(raw) }
         return VStack(spacing: -scale * 1) {
             Text(v ?? "--")
-                .font(.system(size: scale * 27, weight: .semibold, design: .rounded))
+                .font(.system(size: scale * 36, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
             Text("bar")
-                .font(.system(size: scale * 11, weight: .medium, design: .rounded))
+                .font(.system(size: scale * 14, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.55))
         }
-        .frame(width: scale * 62)
+        .frame(width: scale * 92)
     }
 }
 

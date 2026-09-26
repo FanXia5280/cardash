@@ -567,7 +567,8 @@ struct SpeedSlot<Gauge: View, Tire: View>: View {
                 }
             }
         }
-        .overlay(alignment: .bottom) { pageDots }
+        // 两页共用同一个内容框（见 boxW / boxH）——切换时外框不跳、观感一致。
+        .frame(width: boxW, height: boxH)
         .animation(.easeInOut(duration: 0.18), value: image == nil)
         .animation(.easeInOut(duration: 0.18), value: page)
         .contentShape(Rectangle())
@@ -585,22 +586,14 @@ struct SpeedSlot<Gauge: View, Tire: View>: View {
         )
     }
 
-    /// 底部两个小点：告诉用户"这一格有两页、可以滑"。
-    /// ⚠️ 常显（不再依赖有没有胎压数据）—— 否则没连车机时用户根本发现不了这个手势。
-    @ViewBuilder private var pageDots: some View {
-        HStack(spacing: scale * 4) {
-            dot(active: page == .speed)
-            dot(active: page == .tire)
-        }
-        .padding(.bottom, scale * 2)
-        .allowsHitTesting(false)
-    }
-
-    private func dot(active: Bool) -> some View {
-        Circle()
-            .fill(Color.white.opacity(active ? 0.85 : 0.28))
-            .frame(width: scale * 5, height: scale * 5)
-    }
+    /// 两页共用的内容框（宽 × 高）。
+    ///
+    /// ⚠️ 2026-09-26 用户反馈「胎压和时速大小不一样、切换很生硬」——
+    /// 根因是两页各自撑自己的尺寸（速度表约 90~250 宽，胎压页 178×146），
+    /// 一切过去外框就变。现在**两页都装进同一个框**：布局不跳，
+    /// 胎压页也按同一个框去撑（见 `TirePressurePanel` 的 w/h）。
+    private var boxW: CGFloat { scale * 300 }
+    private var boxH: CGFloat { scale * 176 }
 }
 
 /// 「速度」那一格的两张页
