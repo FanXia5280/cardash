@@ -54,6 +54,13 @@ public class BootProvider extends ContentProvider {
             Diagnostics.log("氛围灯初始化失败: " + t);
         }
 
+        // HUD 红绿灯：同样跟随桌面进程保活 + 在「桌面设置」氛围灯下面挂入口。
+        try {
+            HudEntry.install(ctx);
+        } catch (Throwable t) {
+            Diagnostics.log("HUD 红绿灯初始化失败: " + t);
+        }
+
         return true;
     }
 
