@@ -188,7 +188,8 @@ public class ProbePage extends Page {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         hlp.topMargin = dp(10);
         tvHex.setLayoutParams(hlp);
-        tvHex.setBackground(Ui.roundRect(c, 0xFF0F131C, 10, 0x1FFFFFFF));
+        tvHex.setBackground(Ui.roundRect(c, Ui.CARD_INNER, 10,
+                Ui.isLightHost() ? 0x14000000 : 0x1FFFFFFF));
         tvHex.setPadding(dp(12), dp(10), dp(12), dp(10));
         card.addView(tvHex);
 
@@ -319,12 +320,13 @@ public class ProbePage extends Page {
     }
 
     private TextView actionButton(Context c, String text, boolean primary) {
-        TextView tv = Ui.text(c, text, 14, primary ? 0xFFFFFFFF : Ui.TEXT_SECONDARY, true);
+        TextView tv = Ui.text(c, text, 14,
+                primary ? 0xFFFFFFFF : Ui.TEXT_SECONDARY, true);
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(dp(10), dp(12), dp(10), dp(12));
         tv.setBackground(primary
                 ? Ui.roundRect(c, 0xFF4A6CF7, 14, null)
-                : Ui.roundRect(c, 0x1AFFFFFF, 14, null));
+                : Ui.roundRect(c, Ui.isLightHost() ? 0x14000000 : 0x1AFFFFFF, 14, null));
         tv.setClickable(true);
         tv.setFocusable(true);
         Ui.addPressEffect(tv);

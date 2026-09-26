@@ -27,8 +27,9 @@ public abstract class Page {
     public View getView() {
         if (root == null) {
             root = build(activity);
-            // 每个页面都使用不透明底色，避免切换时残留上一页内容
-            root.setBackgroundColor(0xFF0A0D14);
+            // 页面底色 = 宿主背景色（内嵌时即桌面设置页的颜色；独立版仍是深色底）。
+            // 不透明，避免切换时残留上一页内容。
+            root.setBackgroundColor(Ui.hostColor());
         }
         return root;
     }

@@ -26,6 +26,8 @@ struct CarSnapshot: Codable, Equatable {
     var turn: Int?
     /// 前方电子眼（车机高德引导广播）。null = 前方没有
     var camera: CameraInfo?
+    /// 四个轮子的胎压。null = 车机没给（旧版车机 APK / 这台车没有 TPMS）。
+    var tire: TireInfo?
     var nav: NavState?
     /// 各字段的来源，用于排查（vhal / none 等）
     var src: [String: String]?
@@ -46,6 +48,39 @@ struct CameraInfo: Codable, Equatable {
     var dist: Int?
     var type: Int?
     var speed: Int?
+}
+
+/// 四个轮子的胎压。
+///
+/// ⚠️ **值是车机原样给的字符串**（形如 `"2.51"`），不是数字 —— 车机那边
+/// （`CacheCarS05Info.tirePressureFrontLeft` …）存的就是底包 native 方法
+/// 格式化好的字符串（`formatSingleTirePressure(int)` / `formatVirtualCarTirePressure(float)`），
+/// 单位换算和小数位都在 native 里。
+///
+/// ⇒ 我们**绝不做单位换算**，只把字符串画出来，单位固定标 `bar`
+///   （车机自己的「车辆信息」卡片上标的也是 bar）。
+///   这样就不会出现「2.51 被当成 251」这类错。
+///
+/// 车机每帧都会重新读一遍桌面缓存，所以这个值是**动态**的（不是开机读一次就不动）。
+struct TireInfo: Codable, Equatable {
+    /// 左前 / 右前 / 左后 / 右后
+    var fl: String?
+    var fr: String?
+    var rl: String?
+    var rr: String?
+
+    /// 四个轮子里的有效值（去掉 nil / 空串 / 字面 "null"）
+    func value(_ raw: String?) -> String? {
+        guard let v = raw?.trimmingCharacters(in: .whitespaces), !v.isEmpty, v != "null" else {
+            return nil
+        }
+        return v
+    }
+
+    /// 至少一个轮子有值才值得显示（全空时整页没意义）
+    var hasAny: Bool {
+        value(fl) != nil || value(fr) != nil || value(rl) != nil || value(rr) != nil
+    }
 }
 
 /// 路线的一段，带上高德给的路况。

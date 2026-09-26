@@ -133,6 +133,41 @@ public final class Res {
         if (d != null) v.setBackground(d);
     }
 
+    /**
+     * ⚠️ 手写段（make_lantern_res.py 重新生成本文件时**要把这段带回去**）：
+     * 按宿主主题重写「背景类」drawable 的颜色并清掉解析缓存。
+     *
+     * <p>2026-09-26 用户反馈：桌面设置页是浅色的，面板固定深色卡片看着突兀
+     * ⇒ 打开面板时按宿主背景亮/暗切两套。只动背景/分隔这些中性色，
+     * 渐变圆钮（grad_*）与图标（ic_*）不动 —— 它们在两种底色上都能看。</p>
+     *
+     * @param light true = 宿主白底（卡片白底 + 深色描边）；false = 恢复原来的深色
+     */
+    public static void applyTheme(boolean light) {
+        synchronized (Res.class) {
+            if (light) {
+                XML[bg_card] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FFFFFFFF\" /><corners android:radius=\"18dp\" /><stroke android:width=\"1dp\" android:color=\"#14000000\" /></shape>";
+                XML[bg_card_inner] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FFF2F4F8\" /><corners android:radius=\"14dp\" /></shape>";
+                XML[bg_chip] = "<selector xmlns:android=\"http://schemas.android.com/apk/res/android\"><item android:state_selected=\"true\"><shape android:shape=\"rectangle\"><solid android:color=\"#332F6BFF\" /><corners android:radius=\"20dp\" /><stroke android:width=\"1dp\" android:color=\"#804A6CF7\" /></shape></item><item><shape android:shape=\"rectangle\"><solid android:color=\"#FFF2F4F8\" /><corners android:radius=\"20dp\" /></shape></item></selector>";
+                XML[bg_icon_circle_dark] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"oval\"><solid android:color=\"#FFF2F4F8\" /><stroke android:width=\"1dp\" android:color=\"#1A000000\" /></shape>";
+                XML[bg_pill] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#14000000\" /><corners android:radius=\"20dp\" /></shape>";
+                XML[bg_seg] = "<selector xmlns:android=\"http://schemas.android.com/apk/res/android\"><item android:state_selected=\"true\"><shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><gradient android:startColor=\"#FF4A6CF7\" android:endColor=\"#FF7B5CFF\" android:angle=\"0\" /><corners android:radius=\"12dp\" /></shape></item><item><shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FFF2F4F8\" /><corners android:radius=\"12dp\" /></shape></item></selector>";
+                XML[bg_seg_normal] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FFF2F4F8\" /><corners android:radius=\"12dp\" /></shape>";
+                XML[seek_track] = "<layer-list xmlns:android=\"http://schemas.android.com/apk/res/android\"><item android:id=\"@android:id/background\"><shape android:shape=\"rectangle\"><corners android:radius=\"3dp\" /><solid android:color=\"#FFE2E5EB\" /><size android:height=\"6dp\" /></shape></item><item android:id=\"@android:id/progress\"><clip><shape android:shape=\"rectangle\"><corners android:radius=\"3dp\" /><gradient android:startColor=\"#FF4A6CF7\" android:endColor=\"#FF7B5CFF\" android:angle=\"0\" /><size android:height=\"6dp\" /></shape></clip></item></layer-list>";
+            } else {
+                XML[bg_card] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FF161A25\" /><corners android:radius=\"18dp\" /><stroke android:width=\"1dp\" android:color=\"#1FFFFFFF\" /></shape>";
+                XML[bg_card_inner] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FF1E2331\" /><corners android:radius=\"14dp\" /></shape>";
+                XML[bg_chip] = "<selector xmlns:android=\"http://schemas.android.com/apk/res/android\"><item android:state_selected=\"true\"><shape android:shape=\"rectangle\"><solid android:color=\"#332F6BFF\" /><corners android:radius=\"20dp\" /><stroke android:width=\"1dp\" android:color=\"#804A6CF7\" /></shape></item><item><shape android:shape=\"rectangle\"><solid android:color=\"#FF1E2331\" /><corners android:radius=\"20dp\" /></shape></item></selector>";
+                XML[bg_icon_circle_dark] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"oval\"><solid android:color=\"#FF1B2130\" /><stroke android:width=\"1dp\" android:color=\"#26FFFFFF\" /></shape>";
+                XML[bg_pill] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#33000000\" /><corners android:radius=\"20dp\" /></shape>";
+                XML[bg_seg] = "<selector xmlns:android=\"http://schemas.android.com/apk/res/android\"><item android:state_selected=\"true\"><shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><gradient android:startColor=\"#FF4A6CF7\" android:endColor=\"#FF7B5CFF\" android:angle=\"0\" /><corners android:radius=\"12dp\" /></shape></item><item><shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FF1E2331\" /><corners android:radius=\"12dp\" /></shape></item></selector>";
+                XML[bg_seg_normal] = "<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"rectangle\"><solid android:color=\"#FF1E2331\" /><corners android:radius=\"12dp\" /></shape>";
+                XML[seek_track] = "<layer-list xmlns:android=\"http://schemas.android.com/apk/res/android\"><item android:id=\"@android:id/background\"><shape android:shape=\"rectangle\"><corners android:radius=\"3dp\" /><solid android:color=\"#FF2A3040\" /><size android:height=\"6dp\" /></shape></item><item android:id=\"@android:id/progress\"><clip><shape android:shape=\"rectangle\"><corners android:radius=\"3dp\" /><gradient android:startColor=\"#FF4A6CF7\" android:endColor=\"#FF7B5CFF\" android:angle=\"0\" /><size android:height=\"6dp\" /></shape></clip></item></layer-list>";
+            }
+            STATES.clear();   // 已解析的 Drawable 是旧配色的，全部作废重来
+        }
+    }
+
     /** 原 setImageResource 的替代（ImageView）。 */
     public static void setIcon(ImageView iv, int key) {
         if (iv == null) return;

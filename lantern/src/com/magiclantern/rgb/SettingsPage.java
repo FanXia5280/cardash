@@ -215,7 +215,7 @@ public class SettingsPage extends Page {
         final EditText et = new EditText(activity);
         et.setInputType(InputType.TYPE_CLASS_NUMBER);
         et.setText(String.valueOf(Prefs.get(activity).getLedCount()));
-        et.setTextColor(0xFFFFFFFF);
+        et.setTextColor(Ui.TEXT_PRIMARY);
         new AlertDialog.Builder(activity)
                 .setTitle("灯带总点数")
                 .setView(et)

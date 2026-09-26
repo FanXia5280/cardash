@@ -59,6 +59,31 @@ public final class StateHub {
     public volatile Integer cameraType;
     public volatile Integer cameraSpeed;
 
+    // ── 胎压（四个轮子）──
+    //
+    // ⚠️ 故意用 **String**，不是数字：底包的格式化逻辑是 **native 方法**
+    // （`S05VehicleDataMonitor.formatSingleTirePressure(int)` /
+    //   `formatVirtualCarTirePressure(float)`），
+    // 单位换算和小数位全在 native 里。我们原样透传、iPhone 原样显示，
+    // **绝不去猜 kPa/bar** —— 否则很容易把 2.51 当成 251 显示出去。
+    //
+    // 值来自车机桌面**自己的缓存** `carinfo.CacheCarS05Info.tirePressureFrontLeft/…`
+    // （就是它左侧「车辆信息」卡片上显示的那四个数，同一个对象）。
+    //
+    // 动态更新有两条路（见 VendorSignals.readTire / onLiveEvent）：
+    //   1. 每次轮询读一遍缓存；
+    //   2. 挂 `onInfoChangedListeners` —— 桌面每刷新一次缓存就回推一份新的
+    //      CacheCarS05Info，我们当场把四个胎压重新读一遍。
+    // ⇒ 不是"开机读一次就不动"。
+    public volatile String tireFl;
+    public volatile String tireFr;
+    public volatile String tireRl;
+    public volatile String tireRr;
+    /** 最近一次收到胎压的时间 */
+    public volatile long tireAt;
+    /** 曾经收到过胎压（用来区分"车没有这个数据"和"还没读到"）*/
+    public volatile boolean tireSeen;
+
     // ── 转向灯（左右分开，见 turnValue 的"保持"逻辑）──
     /** 左转向灯**最近一次"亮"**是什么时候（0 = 从没见过亮）。见 {@link #TURN_HOLD_MS} */
     public volatile long turnLeftOnAt;
@@ -319,6 +344,20 @@ public final class StateHub {
                         cameraType == null ? null : cameraType.doubleValue()))
              .append(",\"speed\":").append(Json.num(
                         cameraSpeed == null ? null : cameraSpeed.doubleValue()))
+             .append('}');
+        } else {
+            b.append("null");
+        }
+
+        // 胎压（四个轮子）。值就是车机桌面缓存里的**已格式化字符串**，原样下发，
+        // iPhone 原样显示 —— 单位/小数位不在我们这边解释（见 tireFl 的注释）。
+        // 四个都是 null 时下发 null，iPhone 就不显示胎压页（旧版车机 APK 也一样）。
+        b.append(",\"tire\":");
+        if (tireFl != null || tireFr != null || tireRl != null || tireRr != null) {
+            b.append("{\"fl\":").append(Json.esc(tireFl))
+             .append(",\"fr\":").append(Json.esc(tireFr))
+             .append(",\"rl\":").append(Json.esc(tireRl))
+             .append(",\"rr\":").append(Json.esc(tireRr))
              .append('}');
         } else {
             b.append("null");

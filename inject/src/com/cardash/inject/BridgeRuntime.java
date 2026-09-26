@@ -278,6 +278,14 @@ public final class BridgeRuntime {
         sb.append("  电量   ").append(fmt(hub.soc, " %")).append('\n');
         sb.append("  续航   ").append(fmt(hub.rangeKm, " km")).append('\n');
         sb.append("  总里程 ").append(fmt(hub.odometerKm, " km")).append('\n');
+        // 胎压一行：值就是桌面缓存里那四个已格式化字符串（原样透传给 iPhone）。
+        // 全空时说明底包还没填（或这台车没有 TPMS）—— 顺便告诉排查的人"读到过没有"。
+        sb.append("  胎压   左前 ").append(nullDash(hub.tireFl))
+          .append("  右前 ").append(nullDash(hub.tireFr))
+          .append("  左后 ").append(nullDash(hub.tireRl))
+          .append("  右后 ").append(nullDash(hub.tireRr))
+          .append(hub.tireSeen ? "" : "（还没从桌面缓存读到过）")
+          .append('\n');
         sb.append("  导航   ").append(hub.navTitle == null ? "--" : hub.navTitle).append('\n');
         // 目的地一行（/diag 也看得到，不用非去翻 /logcat）
         sb.append("  目的地 ").append(DestSignals.destName() == null ? "--" : DestSignals.destName())
@@ -325,6 +333,11 @@ public final class BridgeRuntime {
 
     private static String fmt(Double d, String unit) {
         return d == null ? "--" : String.valueOf(Math.round(d)) + unit;
+    }
+
+    /** 字符串字段的 "--" 兜底（胎压是格式化好的字符串，不经 fmt）。 */
+    private static String nullDash(String s) {
+        return s == null || s.isEmpty() ? "--" : s;
     }
 
     private static String route(String path, String query) {

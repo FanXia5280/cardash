@@ -46,7 +46,6 @@ public class LanternPanel extends FrameLayout implements BleController.Listener 
 
     private static final int REQ_PERMISSION = 1001;
     private static final int REQ_ENABLE_BT = 1002;
-    private static final int INACTIVE = 0xFF5C6577;
 
     /** 宿主 Activity：独立运行时是 MainActivity，嵌入时是车机桌面的设置页 */
     private final Activity host;
@@ -91,7 +90,8 @@ public class LanternPanel extends FrameLayout implements BleController.Listener 
         this.host = host;
         this.embedded = embedded;
         this.ble = BleController.get(host);
-        setBackgroundColor(0xFF0A0D14);
+        // 底色 = 宿主（桌面设置页）背景色，由 PanelTheme 打开面板前采样并套用主题
+        setBackgroundColor(Ui.hostColor());
 
         buildUi();
 
@@ -112,7 +112,7 @@ public class LanternPanel extends FrameLayout implements BleController.Listener 
 
         LinearLayout root = new LinearLayout(c);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF0A0D14);
+        root.setBackgroundColor(Ui.hostColor());
         addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -151,7 +151,7 @@ public class LanternPanel extends FrameLayout implements BleController.Listener 
         brlp.topMargin = Ui.dp(c, 3);
         topBtIcon = new ImageView(c);
         Res.setIcon(topBtIcon, Res.ic_bt);
-        topBtIcon.setColorFilter(INACTIVE);
+        topBtIcon.setColorFilter(Ui.TEXT_THIRD);
         int bt = Ui.dp(c, 13);
         btRow.addView(topBtIcon, new LinearLayout.LayoutParams(bt, bt));
         topSubtitle = Ui.text(c, "未连接", 12, Ui.TEXT_SECONDARY, false);
@@ -193,7 +193,7 @@ public class LanternPanel extends FrameLayout implements BleController.Listener 
 
         // ---- 内容区 ----
         content = new FrameLayout(c);
-        content.setBackgroundColor(0xFF0A0D14);
+        content.setBackgroundColor(Ui.hostColor());
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
         clp.topMargin = Ui.dp(c, 4);
@@ -268,7 +268,7 @@ public class LanternPanel extends FrameLayout implements BleController.Listener 
 
         // 清掉上一页，避免合成层残留（容器有不透明背景，重绘时先铺底）
         content.removeAllViews();
-        content.setBackgroundColor(0xFF0A0D14);
+        content.setBackgroundColor(Ui.hostColor());
         content.invalidate();
         final View next = page.getView();
         next.setVisibility(View.VISIBLE);
@@ -296,13 +296,13 @@ public class LanternPanel extends FrameLayout implements BleController.Listener 
         String sub = page.getSubtitle();
         topSubtitle.setText(sub != null && sub.length() > 0 ? sub : getConnectionSummary());
         boolean connected = ble.getConnectedCount() > 0;
-        topBtIcon.setColorFilter(connected ? 0xFF4A6CF7 : INACTIVE);
-        topSubtitle.setTextColor(connected ? 0xFF8FB0FF : 0xFF8A93A6);
+        topBtIcon.setColorFilter(connected ? 0xFF4A6CF7 : Ui.TEXT_THIRD);
+        topSubtitle.setTextColor(connected ? 0xFF8FB0FF : Ui.TEXT_SECONDARY);
 
         // 右上角电源按钮：开灯时高亮，关灯时熄灭
         boolean powerOn = Prefs.get(getContext()).isPowerOn();
         Res.bg(btnPower, powerOn ? Res.grad_blue : Res.bg_icon_circle_dark);
-        btnPower.setColorFilter(powerOn ? 0xFFFFFFFF : 0xFF5C6577);
+        btnPower.setColorFilter(powerOn ? 0xFFFFFFFF : Ui.TEXT_THIRD);
     }
 
     public void refreshPages() {

@@ -489,6 +489,16 @@ final class DashboardModel: ObservableObject {
         carFresh ? car?.camera : nil
     }
 
+    /// 四个轮子的胎压（车机桌面缓存里的格式化字符串，iPhone 原样显示）。
+    ///
+    /// 只在**车机在线**（`carFresh`）时给值 —— 车机每帧都会重读一遍桌面缓存，
+    /// 所以跟着车机走就是动态的；断链时归 nil，那一页会退回速度页。
+    /// 四个轮子全空（旧版车机 APK / 没 TPMS）也返回 nil，这时不允许滑到胎压页。
+    var displayTire: TireInfo? {
+        guard carFresh, let t = car?.tire, t.hasAny else { return nil }
+        return t
+    }
+
     /// 要不要"两边冒红"？
     ///
     /// ⚠️ 用户 2026-09-24 提的关键点：**高德的红色脉冲是"会被拍限速的电子眼"才冒**，

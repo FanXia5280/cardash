@@ -14,10 +14,55 @@ import android.widget.TextView;
 /** UI 构建工具：统一设计图风格（深色卡片 + 渐变圆图标 + 圆角） */
 public class Ui {
 
-    public static final int TEXT_PRIMARY = 0xFFFFFFFF;
-    public static final int TEXT_SECONDARY = 0xFF8A93A6;
-    public static final int TEXT_THIRD = 0xFF5C6577;
-    public static final int CARD_INNER = 0xFF1E2331;
+    /**
+     * 文字/卡片色板。
+     *
+     * <p>⚠️ 2026-09-26 起**不再是常量**：内嵌进桌面设置后要跟着宿主（D 桌面）
+     * 的白天/夜间主题走，由 {@link #applyTheme(boolean, int)} 在面板打开前整体切换。
+     * 默认值 = 原来的深色配色（独立 APK 形态不变）。</p>
+     */
+    public static int TEXT_PRIMARY = 0xFFFFFFFF;
+    public static int TEXT_SECONDARY = 0xFF8A93A6;
+    public static int TEXT_THIRD = 0xFF5C6577;
+    public static int CARD_INNER = 0xFF1E2331;
+
+    /** 面板底色 = 宿主（桌面设置页）的背景色；由 PanelTheme 采样后塞进来。 */
+    private static int hostColor = 0xFF0A0D14;
+
+    /** 宿主背景是不是浅色（true = 白底黑字）。 */
+    private static boolean lightHost = false;
+
+    /**
+     * 按宿主背景切整套配色（由 {@code com.cardash.inject.PanelTheme} 调用）。
+     *
+     * @param light  宿主是浅色主题（白底黑字）？
+     * @param bgColor 宿主背景色（面板根布局/页面底色直接用它，保证和 D 桌面一样）
+     */
+    public static void applyTheme(boolean light, int bgColor) {
+        lightHost = light;
+        hostColor = bgColor;
+        if (light) {
+            TEXT_PRIMARY = 0xFF171C26;
+            TEXT_SECONDARY = 0xFF6A7484;
+            TEXT_THIRD = 0xFF9AA3B2;
+            CARD_INNER = 0xFFF2F4F8;
+        } else {
+            TEXT_PRIMARY = 0xFFFFFFFF;
+            TEXT_SECONDARY = 0xFF8A93A6;
+            TEXT_THIRD = 0xFF5C6577;
+            CARD_INNER = 0xFF1E2331;
+        }
+    }
+
+    /** 面板底色（= 采到的宿主背景色）。 */
+    public static int hostColor() {
+        return hostColor;
+    }
+
+    /** 宿主是不是浅色主题。 */
+    public static boolean isLightHost() {
+        return lightHost;
+    }
 
     private static float scaleCache = -1f;
     private static float scaleOverride = -1f;

@@ -286,6 +286,90 @@ struct GearPanel: View {
     }
 }
 
+// MARK: - 中央：胎压（「时速」那一格的第二页）
+
+/// 四轮胎压面板 —— 「时速」那一格的第二页（竖屏左右滑 / 横屏上下滑切换，见 `SpeedSlot`）。
+///
+/// 视觉照用户 2026-09-26 给的参考图：**透明车底盘轮廓 + 四个轮子各一个读数**
+/// （左前 / 右前 / 左后 / 右后）。
+///
+/// ⚠️ 数值直接用车机给的**字符串**，单位固定标 `bar`，**不做任何换算** ——
+/// 车机那边存的就是底包 native 格式化好的字符串（见 `TireInfo` 的注释）。
+struct TirePressurePanel: View {
+    let tire: TireInfo?
+    let scale: CGFloat
+
+    private var w: CGFloat { scale * 178 }
+    private var h: CGFloat { scale * 146 }
+
+    var body: some View {
+        ZStack {
+            chassis
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    reading(tire?.fl)
+                    Spacer(minLength: scale * 10)
+                    reading(tire?.fr)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 0) {
+                    reading(tire?.rl)
+                    Spacer(minLength: scale * 10)
+                    reading(tire?.rr)
+                }
+            }
+        }
+        .frame(width: w, height: h)
+        .shadow(color: .black.opacity(0.28), radius: 10, y: 2)
+    }
+
+    /// 透明车底盘：**只描边、不填充**，车头朝上。
+    /// 前挡风 / 后窗各画一条弧线 —— 光看轮廓也能认出哪头是车头。
+    private var chassis: some View {
+        let bw = w * 0.36
+        let bh = h * 0.64
+        return ZStack {
+            RoundedRectangle(cornerRadius: bw * 0.30, style: .continuous)
+                .stroke(Color.white.opacity(0.34), lineWidth: max(1, scale * 1.6))
+                .frame(width: bw, height: bh)
+
+            Path { p in
+                p.move(to: CGPoint(x: bw * 0.08, y: bh * 0.32))
+                p.addQuadCurve(to: CGPoint(x: bw * 0.92, y: bh * 0.32),
+                               control: CGPoint(x: bw * 0.50, y: bh * 0.14))
+            }
+            .stroke(Color.white.opacity(0.26), lineWidth: max(1, scale * 1.4))
+            .frame(width: bw, height: bh)
+
+            Path { p in
+                p.move(to: CGPoint(x: bw * 0.12, y: bh * 0.76))
+                p.addQuadCurve(to: CGPoint(x: bw * 0.88, y: bh * 0.76),
+                               control: CGPoint(x: bw * 0.50, y: bh * 0.90))
+            }
+            .stroke(Color.white.opacity(0.20), lineWidth: max(1, scale * 1.2))
+            .frame(width: bw, height: bh)
+        }
+    }
+
+    /// 单个轮子的读数：大数字 + 小单位。没有值就显示 `--`（不隐藏，位置才稳定）
+    private func reading(_ raw: String?) -> some View {
+        var v: String? = nil
+        if let t = tire { v = t.value(raw) }
+        return VStack(spacing: -scale * 1) {
+            Text(v ?? "--")
+                .font(.system(size: scale * 27, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            Text("bar")
+                .font(.system(size: scale * 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.55))
+        }
+        .frame(width: scale * 62)
+    }
+}
+
 /// 只要总里程。竖屏下它被单独放到右下角（原来比例尺的位置）
 struct OdometerPanel: View {
     let odometer: Double?

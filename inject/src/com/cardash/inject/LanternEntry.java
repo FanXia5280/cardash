@@ -18,16 +18,22 @@ import android.widget.TextView;
 import com.magiclantern.rgb.LanternPanel;
 import com.magiclantern.rgb.Res;
 import com.magiclantern.rgb.Ui;
+import com.s05.hudtraffic.HudPanel;
 
 /**
- * 往车机桌面的「桌面设置」里挂一项「氛围灯设置」（不改原包任何 smali / 资源，纯运行时挂载）。
+ * 往车机桌面的「桌面设置」里挂我们的两项入口（不改原包任何 smali / 资源，纯运行时挂载）：
+ * <b>「HUD 红绿灯」在上、「氛围灯设置」在下</b>；同时按用户要求把原厂的
+ * 「蓝牙设备」「关于我们」两项从侧栏移除，我们的项自然补位到列表尾部。
  *
  * <p>做法：跟着桌面进程启动（{@code BootProvider} → {@code install}），
- * 监听设置页 {@code SettingActivity} 打开，往左边的 RadioGroup 末尾插一项
+ * 监听设置页 {@code SettingActivity} 打开，往左边的 RadioGroup 末尾插两项
  * （**外观照着旁边原厂项复刻**：字号/颜色/内边距/背景/图标尺寸全部照抄），
- * 点它就把 {@link LanternPanel} 放进右边的内容容器 {@code settingsViewContainer}；
+ * 点哪项就把对应面板（{@link HudPanel} / {@link LanternPanel}）放进
+ * 右边的内容容器 {@code settingsViewContainer}；
  * 点回原厂其它项时原厂自己 removeAllViews 会把我们的面板摘掉，
- * 面板的 onDetachedFromWindow 负责解绑监听与广播（蓝牙连接与渐变播放不动 —— 那是保活的活）。
+ * 面板的 onDetachedFromWindow 负责解绑监听与广播
+ * （氛围灯的蓝牙连接与渐变播放不动 —— 那是保活的活；
+ *   HUD 的广播接收在 {@code HudRuntime}，也跟桌面进程走，与面板显隐无关）。
  *
  * <p>为什么敢往 RadioGroup 里插：原厂的 OnCheckedChangeListener 是一条
  * if-else 链、末尾没有 else 兜底（已反编译确认）—— 收到不认识的 id 什么都不做，
@@ -35,7 +41,7 @@ import com.magiclantern.rgb.Ui;
  *
  * <p>⚠️ 2026-09-25 晚：曾经还挂过「应用小窗」（把别的 App 嵌进卡片，含
  * {@code CardAppEntry} / {@code AppWindowTest} 与三条签名权限）—— 用户决定不做，
- * **已全部移除**，这里回到只挂氛围灯一项。相关做法留在文档 §16 里备查。
+ * **已全部移除**。相关做法留在文档 §16 里备查。
  */
 public final class LanternEntry {
 
@@ -51,7 +57,15 @@ public final class LanternEntry {
     private static final String TAG_PANEL = "cardash_entry_panel";
 
     /** 自留 id 段，避开原厂资源 id */
-    private static final int ID_LANTERN = 0x0C4D0001;
+    private static final int ID_HUD = 0x0C4D0001;
+    private static final int ID_LANTERN = 0x0C4D0002;
+
+    /** 面板种类（showPanel 用） */
+    private static final int KIND_HUD = 1;
+    private static final int KIND_LANTERN = 2;
+
+    /** 用户要求移除的原厂侧栏项（按文字匹配；基座改了文字就自动跳过，不会出错） */
+    private static final String[] REMOVE_ORIGINAL = {"蓝牙设备", "关于我们"};
 
     private static volatile boolean installed;
 
@@ -76,6 +90,14 @@ public final class LanternEntry {
             Diagnostics.log("氛围灯保活已挂上（跟随桌面进程）");
         } catch (Throwable t) {
             Diagnostics.log("氛围灯保活启动失败: " + t);
+        }
+
+        // ①b HUD 红绿灯运行时：注册高德红绿灯广播 + HUD 副屏窗口管理（同样跟桌面进程）
+        try {
+            com.s05.hudtraffic.HudRuntime.bootstrap(app);
+            Diagnostics.log("HUD 红绿灯运行时已挂上（跟随桌面进程）");
+        } catch (Throwable t) {
+            Diagnostics.log("HUD 红绿灯运行时启动失败: " + t);
         }
 
         // ② 设置页入口
@@ -134,26 +156,52 @@ public final class LanternEntry {
         // 已经插过（同一份视图只插一次）
         if (group.findViewWithTag(TAG_ITEM) != null) return;
 
-        group.addView(makeItem(a, group, container));
-        Diagnostics.log("桌面设置入口已插入（" + group.getChildCount() + " 项）");
+        // 用户要求：先移除「蓝牙设备」「关于我们」，我们的两项自然补位到列表尾部
+        removeOriginalItems(group);
+
+        // 顺序即侧栏顺序：HUD 红绿灯在上，氛围灯设置在下
+        group.addView(makeItem(a, group, container, "HUD 红绿灯", ID_HUD, KIND_HUD,
+                Res.ic_light));
+        group.addView(makeItem(a, group, container, "氛围灯设置", ID_LANTERN, KIND_LANTERN,
+                Res.ic_palette));
+        Diagnostics.log("桌面设置入口已插入（" + group.getChildCount() + " 项，已移除原厂 "
+                + REMOVE_ORIGINAL.length + " 项中的匹配项）");
     }
 
-    private static RadioButton makeItem(Context c, RadioGroup group, final ViewGroup container) {
-        final RadioButton item = buildItem(c, group, "氛围灯设置");
-        item.setId(ID_LANTERN);
+    /** 把用户点名的两个原厂项从侧栏摘掉（按文字匹配；找不到就跳过，绝不出错）。 */
+    private static void removeOriginalItems(RadioGroup group) {
+        for (int i = group.getChildCount() - 1; i >= 0; i--) {
+            View v = group.getChildAt(i);
+            if (!(v instanceof TextView)) continue;
+            CharSequence t = ((TextView) v).getText();
+            if (t == null) continue;
+            for (String name : REMOVE_ORIGINAL) {
+                if (name.contentEquals(t)) {
+                    group.removeViewAt(i);
+                    Diagnostics.log("已从桌面设置侧栏移除原厂项：" + name);
+                    break;
+                }
+            }
+        }
+    }
+
+    private static RadioButton makeItem(Context c, RadioGroup group, final ViewGroup container,
+                                        String label, int id, final int kind, int iconKey) {
+        final RadioButton item = buildItem(c, group, label, iconKey);
+        item.setId(id);
         item.setTag(TAG_ITEM);
         item.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
             @Override
             public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
                 if (!isChecked) return;
-                showPanel(buttonView.getContext(), container);
+                showPanel(buttonView.getContext(), container, kind);
             }
         });
         return item;
     }
 
     /** 复刻旁边原厂项的外观，只换文字和图标 —— 看起来就是原生的一项。 */
-    private static RadioButton buildItem(Context c, RadioGroup group, String label) {
+    private static RadioButton buildItem(Context c, RadioGroup group, String label, int iconKey) {
         View template = null;
         for (int i = group.getChildCount() - 1; i >= 0; i--) {
             View v = group.getChildAt(i);
@@ -184,7 +232,7 @@ public final class LanternEntry {
                 item.setBackground(cs != null ? cs.newDrawable() : bg);
             }
             // 左侧图标：尺寸完全跟着原厂项来（用户反馈"只有文字、看着突兀"就是这里）
-            item.setCompoundDrawables(lanternIcon(c, tmpl), null, null, null);
+            item.setCompoundDrawables(entryIcon(c, tmpl, iconKey), null, null, null);
         }
 
         if (template != null && template.getLayoutParams() != null) {
@@ -197,19 +245,19 @@ public final class LanternEntry {
     }
 
     /**
-     * 「氛围灯设置」前面那个图标。
+     * 入口项前面的图标（氛围灯 = 调色盘，HUD 红绿灯 = 灯泡）。
      *
      * <p>两点讲究：
      * <ol>
      *   <li>**尺寸必须跟原厂项一致** —— 直接量旁边那一项左侧图标的 intrinsic 尺寸，
      *       按同样的 bounds 贴上去；量不到就按 24dp 兜底。</li>
      *   <li>**必须保证有图标** —— 万一内置的 vector 解析失败（`Res.get` 返回 null，
-     *       比如某台车机的框架不支持），就用代码画一个紫色渐变圆点顶上。
+     *       比如某台车机的框架不支持），就用代码画一个彩色圆点顶上。
      *       只有文字没有图标，跟旁边那几项一比就很突兀。</li>
      * </ol>
      */
-    private static Drawable lanternIcon(Context c, TextView template) {
-        Drawable d = Res.get(c, Res.ic_palette);
+    private static Drawable entryIcon(Context c, TextView template, int iconKey) {
+        Drawable d = Res.get(c, iconKey);
         if (d != null) {
             // vector 是纯色路径，跟文字同色才和原厂图标观感一致
             d.setTintList(template.getTextColors());
@@ -240,15 +288,30 @@ public final class LanternEntry {
         return d;
     }
 
-    /** 把氛围灯面板放进设置页右侧容器（原厂容器是 FrameLayout）。 */
-    private static void showPanel(Context c, ViewGroup container) {
-        if (container.findViewWithTag(TAG_PANEL) != null) return;
+    /**
+     * 把对应面板放进设置页右侧容器（原厂容器是 FrameLayout）。
+     *
+     * @param kind {@link #KIND_HUD} 或 {@link #KIND_LANTERN}
+     */
+    private static void showPanel(Context c, ViewGroup container, int kind) {
+        // 已经是同一种面板就别重建；不是的话把旧的摘掉再放新的（两个面板可以互相切）
+        View existing = container.findViewWithTag(TAG_PANEL);
+        if (existing != null) {
+            boolean same = kind == KIND_HUD ? (existing instanceof HudPanel)
+                    : (existing instanceof LanternPanel);
+            if (same) return;
+            container.removeView(existing);
+        }
 
         Activity host = activityOf(c);
         if (host == null) {
-            Diagnostics.log("氛围灯面板：找不到宿主 Activity，放弃显示");
+            Diagnostics.log("面板：找不到宿主 Activity，放弃显示");
             return;
         }
+
+        // 打开面板前先看一眼宿主背景：亮/暗主题 + 底色都从这里来
+        //（面板底色 = 采到的宿主背景色，保证「和 D 桌面背景一样」）
+        PanelTheme.resolve(container);
 
         int w = container.getWidth();
         int h = container.getHeight();
@@ -256,15 +319,26 @@ public final class LanternEntry {
         Ui.setScaleForContainer(c, w, h);
 
         try {
-            LanternPanel panel = new LanternPanel(host, true);
+            View panel;
+            if (kind == KIND_HUD) {
+                HudPanel hud = new HudPanel(host);
+                panel = hud;
+                container.removeAllViews();
+                container.addView(panel, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                Diagnostics.log("HUD 红绿灯面板已打开（容器 " + w + "x" + h + "px）");
+            } else {
+                LanternPanel lantern = new LanternPanel(host, true);
+                panel = lantern;
+                container.removeAllViews();
+                container.addView(panel, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                Diagnostics.log("氛围灯面板已打开（容器 " + w + "x" + h + "px）");
+            }
             panel.setTag(TAG_PANEL);
-            container.removeAllViews();
-            container.addView(panel, new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            Diagnostics.log("氛围灯面板已打开（容器 " + w + "x" + h + "px）");
         } catch (Throwable t) {
             Ui.clearScaleOverride();
-            Diagnostics.log("氛围灯面板打开失败: " + t);
+            Diagnostics.log("面板打开失败(kind=" + kind + "): " + t);
         }
     }
 

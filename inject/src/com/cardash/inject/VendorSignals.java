@@ -426,6 +426,15 @@ public final class VendorSignals {
         }
 
         if (alias == null) {
+            // 不是别名推送。`onInfoChangedListeners` 是 Function1，回推的是
+            // **整个 CacheCarS05Info 对象** —— 这正好是胎压"动态更新"的来源：
+            // 桌面每刷新一次缓存就回推一份新的，我们当场把四个胎压重读一遍。
+            //
+            // 别的挂钩（Function2 的 detail 等）参数形状不定，readTire 内部
+            // 对"字段读不到"是静默吞掉的，所以这里无脑调是安全的。
+            if (value != null) {
+                readTire(StateHub.get(), value);
+            }
             return;
         }
         String text = value == null ? "null" : String.valueOf(value);
@@ -719,7 +728,11 @@ public final class VendorSignals {
             return true;
         }
         if (A_TIRE_FL.equals(alias)) {
-            hub.setSource("tire", String.valueOf(raw));
+            // ⚠️ 只记诊断，**不用它填胎压**：`vc_alias_tire_pressure` 只有一个别名，
+            // 分不出是哪个轮子（底包的字段映射是 native 的 handleAliasValue，看不到）。
+            // 真正下发给 iPhone 的四个值走 readTire()（桌面缓存里那四个已格式化字符串）。
+            // 特意用另一个 key，免得和 readTire 写的 src.tire 互相覆盖。
+            hub.setSource("tireAlias", alias + "=" + raw);
             return true;
         }
 
@@ -984,8 +997,65 @@ public final class VendorSignals {
             if (hub.rangeKm == null) {
                 str(hub, cache, "oilRemainRange", "range");
             }
+            // 胎压：同一个缓存对象上的四个字符串字段（已格式化，原样透传）
+            readTire(hub, cache);
         } catch (Throwable t) {
             hub.setSource("cache", "err:" + t.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * 读车机桌面缓存里的四个胎压。
+     *
+     * <p>字段名来自 `_tools/dex_class.py` 对 {@code com.deepalhome.launcher.carinfo.CacheCarS05Info}
+     * 的 dump（2026-09-26 核对当前底包 v26.0925.beta）：
+     * <pre>
+     *   Ljava/lang/String;  tirePressureFrontLeft
+     *   Ljava/lang/String;  tirePressureFrontRight
+     *   Ljava/lang/String;  tirePressureRearLeft
+     *   Ljava/lang/String;  tirePressureRearRight
+     * </pre>
+     * 两个底包（旧 `CarS05InfoUtil` / 新 `S05VehicleDataMonitor`）的缓存**是同一个类**
+     * （就是 {@link #CACHE}），所以这里**不需要候选名单**（不像 {@link #UTIL_CANDIDATES}）。
+     *
+     * <p>⚠️ 值**不做数值解析**：它是底包 native 方法格式化好的字符串，
+     * 直接塞进 StateHub 原样下发。理由见 {@code StateHub.tireFl} 的注释。
+     *
+     * <p>每次都覆盖（包括覆盖成 null）—— 缓存是真的没有就让它显示成 "--"，
+     * 而不是把上次的旧值一直挂着。
+     */
+    private static void readTire(StateHub hub, Object cache) {
+        if (cache == null) return;
+        String fl = strField(cache, "tirePressureFrontLeft");
+        String fr = strField(cache, "tirePressureFrontRight");
+        String rl = strField(cache, "tirePressureRearLeft");
+        String rr = strField(cache, "tirePressureRearRight");
+
+        hub.tireFl = fl;
+        hub.tireFr = fr;
+        hub.tireRl = rl;
+        hub.tireRr = rr;
+
+        if (fl != null || fr != null || rl != null || rr != null) {
+            hub.tireSeen = true;
+            hub.tireAt = System.currentTimeMillis();
+            hub.setSource("tire", "cache:"
+                    + fl + "/" + fr + "/" + rl + "/" + rr);
+        } else {
+            hub.setSource("tire", hub.tireSeen ? "cache:空(曾收到过)" : "cache:无此字段");
+        }
+    }
+
+    /** 反射读一个 String 字段，取不到/为空都返回 null（不抛）。 */
+    private static String strField(Object obj, String field) {
+        try {
+            Object v = obj.getClass().getField(field).get(obj);
+            if (v == null) return null;
+            String s = String.valueOf(v).trim();
+            if (s.isEmpty() || "null".equals(s)) return null;
+            return s;
+        } catch (Throwable t) {
+            return null;
         }
     }
 

@@ -13,6 +13,10 @@ struct DashboardView: View {
     /// 所以先用一张非导航地图垫底顶着；起步后再换成导航视图（用户实测会闪一下北京）。
     @State private var navStarted = false
 
+    /// 「时速」那一格现在有两页（速度 / 胎压），竖屏左右滑、横屏上下滑切换。
+    /// 默认停在速度页；车机没有胎压数据时锁在速度页（见 SpeedSlot.tireAvailable）。
+    @State private var speedSlotPage: SpeedSlotPage = .speed
+
     @State private var showSettings = false
     /// 点一下屏幕才浮出设置按钮。
     /// 之前是「点屏幕任意位置直接进设置」，开车时手一碰就弹走了，
@@ -205,6 +209,11 @@ struct DashboardView: View {
                 crossImage = nil
             }
         }
+        .onChange(of: model.displayTire == nil) { gone in
+            // 胎压数据没了（断链 / 这台车没有 TPMS / 旧版车机 APK）⇒
+            // 别把用户留在一页全是 "--" 上，自动退回速度页。
+            if gone { speedSlotPage = .speed }
+        }
     }
 
     /// 点屏幕 → 浮出齿轮；6 秒内没点它就自动收起。
@@ -247,8 +256,16 @@ struct DashboardView: View {
             // ── 车速移到左边（参考图里大 P 的位置），右边整块留给地图 ──
             // 左边有黑色渐变垫底，白字压在上面读得清；
             // 右边地图通亮，路线不会被挡。
-            SpeedSlot(image: crossImage, scale: k, align: .leading) {
+            SpeedSlot(image: crossImage,
+                      scale: k,
+                      align: .leading,
+                      swipeAxis: .vertical,                       // 横屏：上下滑切换
+                      tireAvailable: model.displayTire != nil,
+                      page: $speedSlotPage,
+                      onTap: { revealSettingsButton() }) {
                 SpeedGauge(speed: model.displaySpeed, scale: k, align: .leading)
+            } tire: {
+                TirePressurePanel(tire: model.displayTire, scale: k)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -301,8 +318,15 @@ struct DashboardView: View {
             // ── 车速放靠上一点（用户要求）──
             // 上面有黑色渐变垫底；渐变到屏幕中段就淡出，
             // 下面整块是通亮的地图和导航路线，不受遮罩影响。
-            SpeedSlot(image: crossImage, scale: k) {
+            SpeedSlot(image: crossImage,
+                      scale: k,
+                      swipeAxis: .horizontal,                     // 竖屏：左右滑切换
+                      tireAvailable: model.displayTire != nil,
+                      page: $speedSlotPage,
+                      onTap: { revealSettingsButton() }) {
                 SpeedGauge(speed: model.displaySpeed, scale: k * 1.05)
+            } tire: {
+                TirePressurePanel(tire: model.displayTire, scale: k * 1.05)
             }
             .padding(.top, k * 4)
 
@@ -491,44 +515,103 @@ struct NavExitButton: View {
     }
 }
 
-// MARK: - 「速度」那一格（路口放大图会盖上来）
+// MARK: - 「速度」那一格（速度表 / 胎压 两页可切换）
 
-/// 速度表 + 路口放大图**共用一格**。
+/// 「速度」那一格。**两张页**：速度表、胎压。
 ///
-/// 用户 2026-09-24 的要求：路口放大图「**只可以遮挡速度，不能遮挡其他元素**」。
-/// 做法就是让两者占同一个位置、同一个尺寸：
-/// * 图按 SDK 给的固定比例 **25:16** fit 进去（不会拉伸变形）；
-/// * 高度锁 `150*scale`，**比速度表本身（约 181*scale）矮** ⇒
-///   有没有放大图，这一格的高度都不变，**布局不抖、别的元素不挪位**；
-/// * 竖屏居中、横屏贴左（跟速度表一致），这样图就是压在速度上。
-/// 放大图收起后速度自动露出来（SDK 会回调 hide）。
-struct SpeedSlot<Content: View>: View {
+/// 用户 2026-09-26 的要求（原话确认过）：
+/// * 胎压显示在**时速那一格**；
+/// * **竖屏左右滑**切到胎压、**横屏上下滑**切到胎压；
+/// * **胎压的层级要高于路口图** —— 显示胎压时路口图**不显示**；
+///   切换回时速时，路口图**照旧盖住时速**。
+///
+/// 实现就是"按当前页决定画什么"，而不是靠 ZStack 顺序去赌：
+/// * **时速页** = 速度表 +（有图就）路口图盖上来 —— 和以前完全一样；
+/// * **胎压页** = 只画胎压面板，**路口图这一段代码根本不进** ⇒ 不可能遮挡胎压。
+///
+/// 路口图仍然和这一格共用位置、高度锁定在 `150*scale`（比速度表矮）——
+/// 那是 2026-09-24 定下的"只遮速度、不挡别的元素、布局不抖"，别改。
+struct SpeedSlot<Gauge: View, Tire: View>: View {
     let image: UIImage?
     let scale: CGFloat
     /// 和速度表的对齐方式保持一致（竖屏 .center、横屏 .leading）
     var align: Alignment = .center
-    @ViewBuilder let gauge: () -> Content
+    /// 滑动轴：竖屏 `.horizontal`（左右滑）、横屏 `.vertical`（上下滑）
+    var swipeAxis: Axis = .horizontal
+    /// 有没有胎压数据。没有就锁在速度页（免得滑到一页全是 "--"）
+    let tireAvailable: Bool
+    @Binding var page: SpeedSlotPage
+    /// 点一下这一格 ⇒ 交给外层"浮出设置齿轮"。
+    /// ⚠️ 这格现在必须吃手势（要能滑），所以不能再 `allowsHitTesting(false)`；
+    ///    为了不把外层"点屏幕浮出齿轮"吞掉，这里自己把点击转出去。
+    let onTap: () -> Void
+    @ViewBuilder let gauge: () -> Gauge
+    @ViewBuilder let tire: () -> Tire
 
     var body: some View {
         ZStack(alignment: align) {
-            gauge()
+            if page == .tire {
+                // 胎压页：**不画路口图**（用户要求：胎压的层级高于路口图）
+                tire()
+            } else {
+                gauge()
 
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(25.0 / 16.0, contentMode: .fit)
-                    .frame(maxHeight: 150 * scale)
-                    .background(Color(hex: 0x101418))       // 不透明：真把速度盖住
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.4), radius: 12, y: 2)
-                    .transition(.opacity)
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(25.0 / 16.0, contentMode: .fit)
+                        .frame(maxHeight: 150 * scale)
+                        .background(Color(hex: 0x101418))       // 不透明：真把速度盖住
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.4), radius: 12, y: 2)
+                        .transition(.opacity)
+                }
             }
         }
+        .overlay(alignment: .bottom) { pageDots }
         .animation(.easeInOut(duration: 0.18), value: image == nil)
-        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.18), value: page)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .gesture(
+            DragGesture(minimumDistance: 18)
+                .onEnded { v in
+                    guard tireAvailable else { return }
+                    let primary = (swipeAxis == .horizontal)
+                        ? v.translation.width : v.translation.height
+                    guard abs(primary) > 28 else { return }
+                    // 往"下一张"的方向滑 = 胎压；往回滑 = 速度
+                    let next: SpeedSlotPage = (primary < 0) ? .tire : .speed
+                    if next != page { page = next }
+                }
+        )
     }
+
+    /// 底部两个小点：告诉用户"这一格有两页、可以滑"（没胎压数据就不显示）
+    @ViewBuilder private var pageDots: some View {
+        if tireAvailable {
+            HStack(spacing: scale * 4) {
+                dot(active: page == .speed)
+                dot(active: page == .tire)
+            }
+            .padding(.bottom, scale * 2)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func dot(active: Bool) -> some View {
+        Circle()
+            .fill(Color.white.opacity(active ? 0.85 : 0.28))
+            .frame(width: scale * 5, height: scale * 5)
+    }
+}
+
+/// 「速度」那一格的两张页
+enum SpeedSlotPage {
+    case speed
+    case tire
 }

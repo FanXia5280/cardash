@@ -198,7 +198,7 @@ public class DevicePage extends Page {
                 color = 0xFF4A6CF7;
             } else {
                 stateText = "连接";
-                color = 0xFF8A93A6;
+                color = Ui.TEXT_SECONDARY;
             }
             stateView.setText(stateText);
             stateView.setTextColor(color);
