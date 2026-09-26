@@ -99,6 +99,8 @@ struct SettingsSheet: View {
                         Button("车机运行状态") { load("/diag", "车机运行状态") }
                         Button("厂商属性扫描") { load("/scan", "厂商属性扫描") }
                         Button("桥接运行日志") { load("/log", "桥接运行日志") }
+                        Button("打开导航探针（对照测试）") { load("/setprobe?on=1", "打开探针") }
+                        Button("关闭导航探针（默认）") { load("/setprobe?on=0", "关闭探针") }
                     }
                 } header: {
                     Text("车机诊断")

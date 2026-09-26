@@ -122,10 +122,13 @@ public final class HttpServer {
                 path = path.substring(0, q);
             }
 
-            // 安全（2026-09-26）：/set* 会改配置或下发指令（/setnav /setfull /setwrite
-            // /setprobe），**只允许车机本机访问** —— 局域网里的其它设备（别人浏览器、
-            // 逆向工具）只能读 /state /diag，改不了车机下发的任何数据。
-            if (!s.getInetAddress().isLoopbackAddress() && path.startsWith("/set")) {
+            // 安全（2026-09-26）：/setnav /setfull /setwrite 会改配置或下发指令，
+            // **只允许车机本机访问** —— 局域网里的其它设备（别人浏览器、逆向工具）
+            // 只能读 /state /diag，改不了车机下发的任何数据。
+            // 例外：/setprobe 是给 iPhone 用的「导航探针」调试开关（默认关、进程重启
+            // 即复位），放行局域网；它只影响"是否去 IPC 查终点"，不改任何配置。
+            boolean local = s.getInetAddress().isLoopbackAddress();
+            if (!local && path.startsWith("/set") && !path.startsWith("/setprobe")) {
                 respond(s, 403, "text/plain; charset=utf-8",
                         "forbidden: write routes are local-only");
                 return;
