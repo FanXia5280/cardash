@@ -18,7 +18,6 @@ import android.widget.TextView;
 import com.magiclantern.rgb.LanternPanel;
 import com.magiclantern.rgb.Res;
 import com.magiclantern.rgb.Ui;
-import com.s05.hudtraffic.HudPanel;
 
 /**
  * 往车机桌面的「桌面设置」里挂我们的两项入口（不改原包任何 smali / 资源，纯运行时挂载）：
@@ -92,14 +91,6 @@ public final class LanternEntry {
             Diagnostics.log("氛围灯保活启动失败: " + t);
         }
 
-        // ①b HUD 红绿灯运行时：注册高德红绿灯广播 + HUD 副屏窗口管理（同样跟桌面进程）
-        try {
-            com.s05.hudtraffic.HudRuntime.bootstrap(app);
-            Diagnostics.log("HUD 红绿灯运行时已挂上（跟随桌面进程）");
-        } catch (Throwable t) {
-            Diagnostics.log("HUD 红绿灯运行时启动失败: " + t);
-        }
-
         // ② 设置页入口
         try {
             app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
@@ -159,9 +150,7 @@ public final class LanternEntry {
         // 用户要求：先移除「蓝牙设备」「关于我们」，我们的两项自然补位到列表尾部
         removeOriginalItems(group);
 
-        // 顺序即侧栏顺序：HUD 红绿灯在上，氛围灯设置在下
-        group.addView(makeItem(a, group, container, "HUD 红绿灯", ID_HUD, KIND_HUD,
-                Res.ic_light));
+        // 只有氛围灯一项（HUD 红绿灯入口已于 2026-09-26 移除）
         group.addView(makeItem(a, group, container, "氛围灯设置", ID_LANTERN, KIND_LANTERN,
                 Res.ic_palette));
         Diagnostics.log("桌面设置入口已插入（" + group.getChildCount() + " 项，已移除原厂 "
@@ -291,14 +280,13 @@ public final class LanternEntry {
     /**
      * 把对应面板放进设置页右侧容器（原厂容器是 FrameLayout）。
      *
-     * @param kind {@link #KIND_HUD} 或 {@link #KIND_LANTERN}
+     * @param kind 目前只有 {@link #KIND_LANTERN}（HUD 那项已移除）
      */
     private static void showPanel(Context c, ViewGroup container, int kind) {
         // 已经是同一种面板就别重建；不是的话把旧的摘掉再放新的（两个面板可以互相切）
         View existing = container.findViewWithTag(TAG_PANEL);
         if (existing != null) {
-            boolean same = kind == KIND_HUD ? (existing instanceof HudPanel)
-                    : (existing instanceof LanternPanel);
+            boolean same = existing instanceof LanternPanel;
             if (same) return;
             container.removeView(existing);
         }
@@ -320,14 +308,7 @@ public final class LanternEntry {
 
         try {
             View panel;
-            if (kind == KIND_HUD) {
-                HudPanel hud = new HudPanel(host);
-                panel = hud;
-                container.removeAllViews();
-                container.addView(panel, new ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                Diagnostics.log("HUD 红绿灯面板已打开（容器 " + w + "x" + h + "px）");
-            } else {
+            {
                 LanternPanel lantern = new LanternPanel(host, true);
                 panel = lantern;
                 container.removeAllViews();

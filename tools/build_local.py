@@ -154,14 +154,14 @@ def main():
 
     # ── 1. javac
     srcs = []
-    # inject = 桥接本体；lantern = 内置的氛围灯（MagicLantern，已去掉 res 依赖）；
-    # hud = 内置的 HUD 红绿灯（S05HudTrafficLight 最小移植集，纯代码 UI 无 res 依赖）
-    for tree in (('inject', 'src'), ('lantern', 'src'), ('hud', 'src')):
+    # inject = 桥接本体；lantern = 内置的氛围灯（MagicLantern，已去掉 res 依赖）。
+    # （hud = 内置 HUD 红绿灯，已于 2026-09-26 移除，用户改回「内置到高德里」那份）
+    for tree in (('inject', 'src'), ('lantern', 'src')):
         for base, _, files in os.walk(os.path.join(ROOT, *tree)):
             for f in files:
                 if f.endswith('.java'):
                     srcs.append(os.path.join(base, f))
-    say('\n源文件 %d 个（桥接 + 内置氛围灯 + 内置 HUD 红绿灯）' % len(srcs))
+    say('\n源文件 %d 个（桥接 + 内置氛围灯）' % len(srcs))
 
     # 源文件多了以后，把所有路径直接拼在命令行上会撞 Windows 的 32K 命令行上限
     # （2026-09-26：三棵树合起来上百个文件，报 WinError 206「文件名或扩展名太长」）。
