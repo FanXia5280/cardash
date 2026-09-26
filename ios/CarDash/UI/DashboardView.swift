@@ -14,7 +14,7 @@ struct DashboardView: View {
     @State private var navStarted = false
 
     /// 「时速」那一格现在有两页（速度 / 胎压），竖屏左右滑、横屏上下滑切换。
-    /// 默认停在速度页；车机没有胎压数据时锁在速度页（见 SpeedSlot.tireAvailable）。
+    /// 默认停在速度页；**随时**可以滑到胎压页（没连车机时四个位置显示 `--`，正好验版式）。
     @State private var speedSlotPage: SpeedSlotPage = .speed
 
     @State private var showSettings = false
@@ -209,11 +209,6 @@ struct DashboardView: View {
                 crossImage = nil
             }
         }
-        .onChange(of: model.displayTire == nil) { gone in
-            // 胎压数据没了（断链 / 这台车没有 TPMS / 旧版车机 APK）⇒
-            // 别把用户留在一页全是 "--" 上，自动退回速度页。
-            if gone { speedSlotPage = .speed }
-        }
     }
 
     /// 点屏幕 → 浮出齿轮；6 秒内没点它就自动收起。
@@ -260,7 +255,6 @@ struct DashboardView: View {
                       scale: k,
                       align: .leading,
                       swipeAxis: .vertical,                       // 横屏：上下滑切换
-                      tireAvailable: model.displayTire != nil,
                       page: $speedSlotPage,
                       onTap: { revealSettingsButton() }) {
                 SpeedGauge(speed: model.displaySpeed, scale: k, align: .leading)
@@ -321,7 +315,6 @@ struct DashboardView: View {
             SpeedSlot(image: crossImage,
                       scale: k,
                       swipeAxis: .horizontal,                     // 竖屏：左右滑切换
-                      tireAvailable: model.displayTire != nil,
                       page: $speedSlotPage,
                       onTap: { revealSettingsButton() }) {
                 SpeedGauge(speed: model.displaySpeed, scale: k * 1.05)
@@ -538,8 +531,10 @@ struct SpeedSlot<Gauge: View, Tire: View>: View {
     var align: Alignment = .center
     /// 滑动轴：竖屏 `.horizontal`（左右滑）、横屏 `.vertical`（上下滑）
     var swipeAxis: Axis = .horizontal
-    /// 有没有胎压数据。没有就锁在速度页（免得滑到一页全是 "--"）
-    let tireAvailable: Bool
+    /// ⚠️ 2026-09-26 改：**不再要求"有胎压数据"才让切页**。
+    /// 原来这里有个 `tireAvailable` 门槛（没数据就不给滑），结果用户
+    /// **没连车机时根本切不到胎压页**，没法先验 UI —— 那是设计错误。
+    /// 现在任何时候都能滑过去，没数据时四个位置显示 `--`（位置/字号照旧，正好用来验版式）。
     @Binding var page: SpeedSlotPage
     /// 点一下这一格 ⇒ 交给外层"浮出设置齿轮"。
     /// ⚠️ 这格现在必须吃手势（要能滑），所以不能再 `allowsHitTesting(false)`；
@@ -580,7 +575,6 @@ struct SpeedSlot<Gauge: View, Tire: View>: View {
         .gesture(
             DragGesture(minimumDistance: 18)
                 .onEnded { v in
-                    guard tireAvailable else { return }
                     let primary = (swipeAxis == .horizontal)
                         ? v.translation.width : v.translation.height
                     guard abs(primary) > 28 else { return }
@@ -591,16 +585,15 @@ struct SpeedSlot<Gauge: View, Tire: View>: View {
         )
     }
 
-    /// 底部两个小点：告诉用户"这一格有两页、可以滑"（没胎压数据就不显示）
+    /// 底部两个小点：告诉用户"这一格有两页、可以滑"。
+    /// ⚠️ 常显（不再依赖有没有胎压数据）—— 否则没连车机时用户根本发现不了这个手势。
     @ViewBuilder private var pageDots: some View {
-        if tireAvailable {
-            HStack(spacing: scale * 4) {
-                dot(active: page == .speed)
-                dot(active: page == .tire)
-            }
-            .padding(.bottom, scale * 2)
-            .allowsHitTesting(false)
+        HStack(spacing: scale * 4) {
+            dot(active: page == .speed)
+            dot(active: page == .tire)
         }
+        .padding(.bottom, scale * 2)
+        .allowsHitTesting(false)
     }
 
     private func dot(active: Bool) -> some View {
