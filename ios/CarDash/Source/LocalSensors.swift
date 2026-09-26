@@ -152,9 +152,18 @@ final class LocalSensors: NSObject, CLLocationManagerDelegate {
         // 相邻两帧时间差要在合理区间，否则不推算。
         func derivedKmh() -> Double? {
             guard let prev else { return nil }
+            // 上一帧本身也要是可信位置，拿一个漂移点算位移只会更漂
+            guard prev.horizontalAccuracy >= 0, prev.horizontalAccuracy < 100 else { return nil }
             let dt = loc.timestamp.timeIntervalSince(prev.timestamp)
             guard dt > 0, dt < 5 else { return nil }
-            return max(0, loc.distance(from: prev) / dt * 3.6)
+            let meters = loc.distance(from: prev)
+            // ⚠️ 地库 / 隧道里 GPS 会整片漂移：一秒位移几百米 ⇒ 算出来上千 km/h，
+            //    这就是"进地下室速度乱飙"。加两道闸：短时间内位移不可能那么大，
+            //    以及乘用车的物理上限。
+            if dt < 1.0 && meters > 80 { return nil }      // ≈288km/h 以上，必是漂移
+            let kmh = meters / dt * 3.6
+            guard kmh < 300 else { return nil }            // 物理上限
+            return max(0, kmh)
         }
 
         // ⚠️ 这一帧"可信度不够"时**不能死守上一帧的值**：
@@ -177,6 +186,7 @@ final class LocalSensors: NSObject, CLLocationManagerDelegate {
             kmh = d
         }
         if kmh < 0 { kmh = 0 }
+        if kmh > 300 { kmh = lastGoodSpeedKmh }   // 异常大值不采信，也不写回缓存
         lastGoodSpeedKmh = kmh
         return kmh
     }

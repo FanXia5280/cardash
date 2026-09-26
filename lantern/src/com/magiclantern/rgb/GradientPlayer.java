@@ -13,6 +13,8 @@ import android.os.Looper;
 public class GradientPlayer {
 
     private static final long INTERVAL = 70L;
+    /** 超过这么久没 tick 过，就认为循环已经死了（会被恢复逻辑重播） */
+    private static final long STALE_MS = 3000L;
 
     private static GradientPlayer instance;
 
@@ -22,23 +24,35 @@ public class GradientPlayer {
     private GradientItem item;
     private float phase;
     private int dir = 1;
+    /** 上一次真正下发成功的时间戳（心跳） */
+    private volatile long lastTickAt;
 
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
-            GradientItem g = item;
-            if (g == null) return;
-            LedOutput.sendRawColor(app, lerp(g.color1, g.color2, phase));
-            float step = 0.010f + g.speed / 100f * 0.045f;
-            phase += dir * step;
-            if (phase >= 1f) {
-                phase = 1f;
-                dir = -1;
-            } else if (phase <= 0f) {
-                phase = 0f;
-                dir = 1;
+            try {
+                GradientItem g = item;
+                if (g == null) return;
+                LedOutput.sendRawColor(app, lerp(g.color1, g.color2, phase));
+                // ⚠️ 这里以前没有 try：sendRawColor 一旦抛异常（蓝牙断连 / 写失败，
+                // 车上跑十几二十分钟总会碰上一次），下面的 postDelayed 就不会执行，
+                // 循环彻底停摆 ⇒ 灯停在最后一帧变成一个固定颜色。
+                // 现在用 finally 保证下一帧一定排上。
+                float step = 0.010f + g.speed / 100f * 0.045f;
+                phase += dir * step;
+                if (phase >= 1f) {
+                    phase = 1f;
+                    dir = -1;
+                } else if (phase <= 0f) {
+                    phase = 0f;
+                    dir = 1;
+                }
+                lastTickAt = System.currentTimeMillis();
+            } catch (Throwable t) {
+                // 单帧下发失败不算数，下一帧继续（心跳不刷新，看门狗会发现）
+            } finally {
+                if (item != null) handler.postDelayed(this, INTERVAL);
             }
-            handler.postDelayed(this, INTERVAL);
         }
     };
 
@@ -56,6 +70,7 @@ public class GradientPlayer {
         item = g;
         phase = 0f;
         dir = 1;
+        lastTickAt = System.currentTimeMillis();
         handler.removeCallbacks(tick);
         handler.post(tick);
     }
@@ -65,8 +80,13 @@ public class GradientPlayer {
         handler.removeCallbacks(tick);
     }
 
+    /**
+     * 真的还在播才算 true —— 光看 item != null 不够：循环一旦死了 item 还在，
+     * 恢复逻辑（LanternBootstrap.restoreGradient）就会以为"还在播"而永远不重播。
+     */
     public boolean isPlaying() {
-        return item != null;
+        return item != null
+                && System.currentTimeMillis() - lastTickAt < STALE_MS;
     }
 
     public String playingName() {

@@ -997,7 +997,22 @@ public final class VendorSignals {
             if (hub.rangeKm == null) {
                 str(hub, cache, "oilRemainRange", "range");
             }
+            // 电量百分比（2026-09-26 修「iPhone 上电量一直显示上车时的值」）：
+            // 缓存里本来就有真实值（cacheCarS05Info.socPercent = 84），以前没读，
+            // 一直靠「剩余续航 ÷ 满电续航」折算 —— 而那段代码写成
+            // `if (hub.soc == null ...)`，只会在第一次算出来，之后**永远不更新**，
+            // 看起来就是电量冻住了。现在优先用缓存里的真实值，每次轮询都刷新。
+            Double sp = numField(cache, "socPercent");
+            if (sp != null && sp > 0 && sp <= 100) {
+                hub.soc = sp;
+                hub.setSource("soc", "cache:socPercent=" + sp);
+            } else {
+                // 缓存没给就清掉，让下面按续航折算的那段**每轮重算**（不再冻住旧值）
+                hub.soc = null;
+            }
+
             // 胎压：同一个缓存对象上的四个字符串字段（已格式化，原样透传）
+            // （缓存每 250ms 读一次 ⇒ 胎压本身就是动态的，不是只取一次）
             readTire(hub, cache);
             // 兜底（2026-09-26 截图实锤）：CarS05InfoUtil.cacheCarS05Info 上明明有
             // tirePressureFrontLeft = 2.59 这样的值，但当前绑的 util 的缓存里可能没有
@@ -1601,4 +1616,24 @@ public final class VendorSignals {
         }
         return null;
     }
+
+    /** 反射读一个数字字段（int/long/float/double 或数字字符串），取不到返回 null。 */
+    private static Double numField(Object obj, String name) {
+        if (obj == null) return null;
+        try {
+            java.lang.reflect.Field f = obj.getClass().getDeclaredField(name);
+            f.setAccessible(true);
+            Object v = f.get(obj);
+            if (v instanceof Number) return ((Number) v).doubleValue();
+            if (v != null) {
+                String s = String.valueOf(v).trim();
+                if (!s.isEmpty()) return Double.parseDouble(s);
+            }
+        } catch (Throwable ignored) {
+            // 字段不存在或类型不对
+        }
+        return null;
+    }
+
 }
+

@@ -87,6 +87,21 @@ public final class LanternBootstrap {
             ble.startScan();
         }
 
+        // 渐变恢复（2026-09-26）：
+        // 以前只挂在 onStateChanged（蓝牙"刚连上"那一瞬）—— 桌面进程起来时蓝牙
+        // 要是已经连着，这个回调不会再触发一次 ⇒ 上车永远不自动恢复渐变。
+        // 这里无条件先补一次；连上事件里也会再调一次（幂等）。
+        restoreGradient(app);
+        // 兜底：连上后 LedOutput.reapplyDeviceConfig 会补发设备侧配置，可能把颜色
+        // 覆盖成静态色 ⇒ 稍后再补一次渐变。
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        restoreGradient(app);
+                    }
+                }, 2000L);
+
         ensureTimingReceiver(app);
         try {
             // 重新排一遍每天的定时闹钟：宿主进程（桌面）每次起来都补一次，防止漏掉
@@ -129,10 +144,10 @@ public final class LanternBootstrap {
         }
     }
 
-    /** 连上后恢复上次在跑的自定义渐变（灯继续按设置渐变） */
+    /** 恢复上次在跑的自定义渐变（灯继续按设置渐变）。幂等，可反复调用。 */
     private static void restoreGradient(Context c) {
         GradientPlayer gp = GradientPlayer.get(c);
-        if (gp.isPlaying()) return;
+        if (gp.isPlaying()) return;      // 心跳还新鲜 ⇒ 真在播，别打断
         String name = Prefs.get(c).getLastGradient();
         if (name == null || name.length() == 0) return;
         for (GradientItem g : Prefs.get(c).getGradients()) {
