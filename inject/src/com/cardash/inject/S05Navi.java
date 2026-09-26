@@ -295,34 +295,12 @@ public final class S05Navi {
      * 由 /diag、/logcat 触发（30 秒限流），不要在轮询里调，免得刷屏。
      */
     public static void probeDestination(String trigger) {
-        if (!probeEnabled) {
-            probeNote = "已关闭（默认关：它会让定制高德退出导航后自动重开导航；开：/setprobe?on=1）";
-            return;
-        }
-        resolve();
-        long now = System.currentTimeMillis();
-        if (now - lastProbeAt < PROBE_MIN_GAP_MS) {
-            probeNote = "限流中（距上次 " + ((now - lastProbeAt) / 1000) + " 秒）";
-            return;
-        }
-        lastProbeAt = now;
-
-        if (mQDest == null && mQDestAccess == null) {
-            probeNote = "没有 queryS05CurrentDestination（版本不同或已被混淆）";
-            return;
-        }
-        try {
-            if (mQDest != null) {
-                mQDest.invoke(bridge, trigger, "cardash");
-            } else {
-                mQDestAccess.invoke(null, bridge, trigger, "cardash");
-            }
-            probeNote = "已触发（" + trigger + "），几秒后看 s05 字段";
-            Diagnostics.log("S05Navi 主动查终点: " + trigger);
-        } catch (Throwable t) {
-            probeNote = "调用失败: " + t;
-            Diagnostics.log("S05Navi 查终点失败: " + t);
-        }
+        // 2026-09-26 彻底废弃（不只是"默认关"）：这个 IPC 查询
+        //（queryS05CurrentDestination）会让深蓝定制高德在退出导航后自动重新导航
+        // 上次的目的地（用户实测：没做 Cardash 前不会发生，做了才出现）。
+        // 目的地现在能从高德广播直接拿到（DestSignals），所以把"查导航 IPC"这步
+        // 物理删除 —— 即使 /setprobe?on=1 或 probeEnabled 被谁误开，也绝不再碰导航。
+        probeNote = "已废弃（不再查导航 IPC；目的地改走高德广播，见 DestSignals）";
     }
 
     // ─────────────────────────────────────── 报告

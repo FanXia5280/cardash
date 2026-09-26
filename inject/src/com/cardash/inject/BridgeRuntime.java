@@ -376,14 +376,10 @@ public final class BridgeRuntime {
                     + "\n默认只读：桥接只做采集，不写 Settings、不查导航 IPC、不补发 HUD 指令。\n";
         }
         if ("/setprobe".equals(path)) {
-            // 临时开关「主动查终点」探针。默认关 —— 开着它时，车机语音退出导航后
-            // 深蓝定制版高德会隔几十秒自动重新开始导航上次的目的地（2026-09-26 实测）。
-            boolean on = query != null && query.contains("on=1");
-            S05Navi.probeEnabled = on;
-            return "S05Navi 主动查终点 = " + (on
-                    ? "开（30 秒限流，会真的去 IPC 查终点）"
-                    : "关（默认）")
-                    + "\n开着它时，退出导航后定制高德可能自动重开导航，测完记得 /setprobe?on=0\n";
+            // 「主动查终点」探针已于 2026-09-26 彻底废弃：不再去 IPC 查导航终点，
+            // 目的地改走高德广播（DestSignals）。这个路由保留只是为了让 iPhone 上的
+            // 老按钮点下去有回音，实际上什么都不会做。
+            return "S05Navi 主动查终点已废弃（不再碰导航 IPC）\n";
         }
         if ("/log".equals(path)) {
             return Diagnostics.tail(64 * 1024);
