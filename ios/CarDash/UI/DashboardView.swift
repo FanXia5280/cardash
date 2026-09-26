@@ -224,7 +224,7 @@ struct DashboardView: View {
 
     private func landscapeLayout(geo: GeometryProxy, k: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // ── 顶栏：左上日期时间 / 中间导航摘要 / 右上海拔 ──
+            // ── 顶栏：左上日期时间 / 中间导航摘要 / 右上退出导航（海拔已移除）──
             ZStack {
                 ClockPanel(scale: k)
                     .frame(height: k * 34, alignment: .center)
@@ -292,15 +292,12 @@ struct DashboardView: View {
 
     private func portraitLayout(k: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // ── 顶栏：日期时间 / 海拔 ──
+            // ── 顶栏：日期时间（海拔 2026-09-26 按用户要求移除）──
             HStack(alignment: .top) {
                 ClockPanel(scale: k)
                     .frame(height: k * 34, alignment: .center)
                     .hudCard(k)
                 Spacer(minLength: 8)
-                AltitudePanel(altitude: model.displayAltitude, scale: k)
-                    .frame(height: k * 34, alignment: .center)
-                    .hudCard(k)
             }
 
             // ── 导航摘要：还有多久 / 多远 / 几点到 ──

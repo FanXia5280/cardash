@@ -14,7 +14,6 @@ final class DashboardModel: ObservableObject {
 
     // MARK: - 本机传感器
     @Published private(set) var localSpeed: Double?
-    @Published private(set) var localAltitude: Double?
     @Published private(set) var localOdometer: Double = 0
     @Published private(set) var locationDenied = false
 
@@ -186,10 +185,9 @@ final class DashboardModel: ObservableObject {
         guard !started else { return }
         started = true
 
-        sensors.onUpdate = { [weak self] speed, altitude, odo in
+        sensors.onUpdate = { [weak self] speed, odo in
             guard let self else { return }
             self.localSpeed = speed
-            self.localAltitude = altitude
             self.localOdometer = odo
         }
         sensors.onDenied = { [weak self] in
@@ -453,18 +451,17 @@ final class DashboardModel: ObservableObject {
         return s
     }
 
-    var displayAltitude: Double? {
-        if let a = car?.altitude, carFresh { return a }
-        return localAltitude
-    }
-
     /// 总里程——**优先用车机**。
     ///
-    /// 车机那边现在走实时推送（不会再卡住不涨了）。
-    /// 本机 GPS 里程只在车机完全没数据时兜底：它是从 App 启动开始算的，
-    /// 和车机那个累计总里程根本不是一回事，混着用数字会跳。
+    /// 车机那边走实时推送（不会卡住不涨）。本机 GPS 里程只在车机完全没数据时兜底：
+    /// 它是从 App 启动开始算的，和车机那个**累计**总里程根本不是一回事，混着用数字会跳。
+    ///
+    /// ⚠️ 2026-09-26 顺手清掉一处**自我矛盾**：原来写的是
+    /// `if carFresh, let o = ... { return o }` 紧跟 `if let o = ... { return o }` ——
+    /// 第二行把第一行的新鲜度判定整个架空了（代码看着"有闸门"，其实没有）。
+    /// 这里改成**一行、并且明确不带新鲜度**：车机总里程是累计值，
+    /// 断链时**冻在最后一个值**也比跳到另一个量纲（本地里程）上强。
     var displayOdometer: Double? {
-        if carFresh, let o = car?.odometer, o > 0 { return o }
         if let o = car?.odometer, o > 0 { return o }
         return localOdometer > 0.3 ? localOdometer : nil
     }

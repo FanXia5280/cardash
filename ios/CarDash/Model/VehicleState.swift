@@ -15,8 +15,10 @@ struct CarSnapshot: Codable, Equatable {
     var range: Double?
     /// 总里程 km
     var odometer: Double?
-    /// 海拔 m
-    var altitude: Double?
+    /// 海拔 m —— **已不再使用**（2026-09-26 用户要求把海拔从界面移除）。
+    /// 车机端 JSON 里仍然会带 `"altitude"`，Swift 这边直接忽略这个键即可；
+    /// 哪天要加回来，把这一行恢复成 `var altitude: Double?` 就行。
+    // var altitude: Double?
     /// 当前路段限速 km/h（车机高德广播的 LIMITED_SPEED，Android 侧见 AmapSignals）。
     /// 用它跟车速比 → 超速时两边冒红（高德 SDK 的 showOverSpeedPulse 是收费接口，
     /// 我们自己算一份，不依赖它）。

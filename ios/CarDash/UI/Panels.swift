@@ -86,24 +86,13 @@ struct ClockPanel: View {
     }
 }
 
-// MARK: - 右上：海拔
-
-struct AltitudePanel: View {
-    let altitude: Double?
-    let scale: CGFloat
-
-    var body: some View {
-        HStack(spacing: scale * 7) {
-            Image(systemName: "mountain.2.fill")
-                .font(.system(size: scale * 16, weight: .semibold))
-            Text(altitude.map { "\(Int($0.rounded()))m" } ?? "--")
-                .font(.system(size: scale * 22, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-        }
-        .foregroundStyle(.white.opacity(0.92))
-        .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
-    }
-}
+// MARK: - 右上：海拔 —— 已移除
+//
+// ⚠️ 2026-09-26 按用户要求**整个删掉**（连带 `DashboardModel.displayAltitude` /
+// `localAltitude` / `LocalSensors` 里那套海拔计算）。
+// 原因：GPS 海拔是芯片瞬时值，静止时乱跳；上一版加的"冻结 + 精度闸"
+// 又漏了 bootstrap（首帧就返回 nil ⇒ 永远显示 `--`），用户说"算了把海拔移除掉吧"。
+// 要加回来：**先把首值写进去再收严门槛**（详见 §6 第 84 条与 LocalSensors 顶部注释）。
 
 // MARK: - 左下：电量 + 剩余续航
 
@@ -328,10 +317,25 @@ struct TirePressurePanel: View {
 
     /// 透明车底盘：**只描边、不填充**，车头朝上。
     /// 前挡风 / 后窗各画一条弧线 —— 光看轮廓也能认出哪头是车头。
+    ///
+    /// ⚠️ 2026-09-26 用户补充：「**只有车没轮胎 本来显示的就是轮胎胎压**」——
+    /// 所以四个轮子也要画出来（半透明填充 + 描边，压在车身轮廓下面，
+    /// 看起来像"轮胎藏在车身侧边下"）。
     private var chassis: some View {
         let bw = w * 0.22
         let bh = h * 0.68
+        let tw = bw * 0.30          // 轮胎宽（俯视图里是一条窄长条）
+        let th = bh * 0.19          // 轮胎长（沿车身方向）
+        let tx = bw / 2             // 轮胎中心压在车身侧边线上（一半露在外面）
+        let ty = bh * 0.29          // 前后轮的纵向位置
+
         return ZStack {
+            // ── 四个轮胎（先画，车身轮廓压在上面）──
+            tireGlyph(tw, th).offset(x: -tx, y: -ty)   // 左前
+            tireGlyph(tw, th).offset(x:  tx, y: -ty)   // 右前
+            tireGlyph(tw, th).offset(x: -tx, y:  ty)   // 左后
+            tireGlyph(tw, th).offset(x:  tx, y:  ty)   // 右后
+
             RoundedRectangle(cornerRadius: bw * 0.30, style: .continuous)
                 .stroke(Color.white.opacity(0.34), lineWidth: max(1, scale * 1.6))
                 .frame(width: bw, height: bh)
@@ -352,6 +356,18 @@ struct TirePressurePanel: View {
             .stroke(Color.white.opacity(0.20), lineWidth: max(1, scale * 1.2))
             .frame(width: bw, height: bh)
         }
+    }
+
+    /// 一个轮胎：俯视看是一条圆角窄长条（半透明填充 + 描边）
+    private func tireGlyph(_ tw: CGFloat, _ th: CGFloat) -> some View {
+        let r = tw * 0.42
+        return RoundedRectangle(cornerRadius: r, style: .continuous)
+            .fill(Color.white.opacity(0.20))
+            .overlay(
+                RoundedRectangle(cornerRadius: r, style: .continuous)
+                    .stroke(Color.white.opacity(0.55), lineWidth: max(1, scale * 1.1))
+            )
+            .frame(width: tw, height: th)
     }
 
     /// 单个轮子的读数：大数字 + 小单位。没有值就显示 `--`（不隐藏，位置才稳定）
