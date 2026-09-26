@@ -49,7 +49,7 @@ enum CoverImageCache {
     }
 }
 
-// MARK: - 左上：日期 + 时间
+// MARK: - 顶栏：日期 + 时间
 
 struct ClockPanel: View {
     let scale: CGFloat
@@ -73,14 +73,15 @@ struct ClockPanel: View {
         // 之前挂在父视图的 Timer 上：父视图只要有一次不再重绘，
         // 时间就停在那不动了（用户反馈「时间不会刷新」）。
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            // 用户 2026-09-26：**日期和时间都要纯白**（原来日期是 `white.opacity(0.70)`，
+            // 看上去"一灰一白"很别扭），所以这里把颜色提到 HStack 上，两个 Text 一视同仁。
             HStack(alignment: .firstTextBaseline, spacing: scale * 10) {
                 Text(Self.dateFmt.string(from: ctx.date))
-                    .foregroundStyle(.white.opacity(0.70))
                 Text(Self.timeFmt.string(from: ctx.date))
-                    .foregroundStyle(.white)
             }
             .font(.system(size: scale * 25, weight: .medium, design: .rounded))
             .monospacedDigit()
+            .foregroundStyle(.white)
             .shadow(color: .black.opacity(0.35), radius: 6, y: 1)
         }
     }

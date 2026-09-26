@@ -226,10 +226,15 @@ struct DashboardView: View {
         VStack(spacing: 0) {
             // ── 顶栏：左上日期时间 / 中间导航摘要 / 右上退出导航（海拔已移除）──
             ZStack {
+                // 用户 2026-09-26 要求时间居中；但横屏**中间在导航时是「导航摘要」的地盘**
+                //（两者都是居中排的，硬挤会叠在一起）⇒ 不导航时居中、导航中让回左边。
                 ClockPanel(scale: k)
                     .frame(height: k * 34, alignment: .center)
                     .hudCard(k)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity,
+                           alignment: model.displayNav?.isActive == true ? .leading : .center)
+                    .animation(.easeInOut(duration: 0.2),
+                               value: model.displayNav?.isActive == true)
 
                 // 注意顺序：opacity 必须在 hudCard **之后**。
                 // 面板自己那层 opacity 是加在内容上的，卡片底会留在外面 ——
@@ -292,12 +297,14 @@ struct DashboardView: View {
 
     private func portraitLayout(k: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // ── 顶栏：日期时间（海拔 2026-09-26 按用户要求移除）──
+            // ── 顶栏：日期时间**居中**（海拔 2026-09-26 按用户要求移除）──
+            // 用户要求：时间居中（海拔拿掉后右半边空着，靠左显得偏）。
             HStack(alignment: .top) {
+                Spacer(minLength: 0)
                 ClockPanel(scale: k)
                     .frame(height: k * 34, alignment: .center)
                     .hudCard(k)
-                Spacer(minLength: 8)
+                Spacer(minLength: 0)
             }
 
             // ── 导航摘要：还有多久 / 多远 / 几点到 ──
