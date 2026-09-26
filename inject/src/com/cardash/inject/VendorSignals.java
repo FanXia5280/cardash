@@ -999,6 +999,30 @@ public final class VendorSignals {
             }
             // 胎压：同一个缓存对象上的四个字符串字段（已格式化，原样透传）
             readTire(hub, cache);
+            // 兜底（2026-09-26 截图实锤）：CarS05InfoUtil.cacheCarS05Info 上明明有
+            // tirePressureFrontLeft = 2.59 这样的值，但当前绑的 util 的缓存里可能没有
+            //（新/旧底包各有一个 util，各挂各的缓存）。读不到就换另一个 util 的缓存再试。
+            if (hub.tireFl == null && hub.tireFr == null
+                    && hub.tireRl == null && hub.tireRr == null) {
+                for (String name : UTIL_CANDIDATES) {
+                    try {
+                        Class<?> c2 = Class.forName(name);
+                        java.lang.reflect.Field f2 = c2.getDeclaredField("cacheCarS05Info");
+                        f2.setAccessible(true);
+                        Object other = f2.get(null);
+                        if (other != null && other != cache) {
+                            readTire(hub, other);
+                            if (hub.tireFl != null || hub.tireFr != null
+                                    || hub.tireRl != null || hub.tireRr != null) {
+                                hub.setSource("tire", "cache2(" + name + ")");
+                                break;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                        // 这个 util 没有就换下一个
+                    }
+                }
+            }
         } catch (Throwable t) {
             hub.setSource("cache", "err:" + t.getClass().getSimpleName());
         }

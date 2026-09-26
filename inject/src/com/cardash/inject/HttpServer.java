@@ -122,6 +122,15 @@ public final class HttpServer {
                 path = path.substring(0, q);
             }
 
+            // 安全（2026-09-26）：/set* 会改配置或下发指令（/setnav /setfull /setwrite
+            // /setprobe），**只允许车机本机访问** —— 局域网里的其它设备（别人浏览器、
+            // 逆向工具）只能读 /state /diag，改不了车机下发的任何数据。
+            if (!s.getInetAddress().isLoopbackAddress() && path.startsWith("/set")) {
+                respond(s, 403, "text/plain; charset=utf-8",
+                        "forbidden: write routes are local-only");
+                return;
+            }
+
             String body = handler.handle(path, query);
             if (body == null) {
                 respond(s, 404, "text/plain; charset=utf-8", "not found");

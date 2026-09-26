@@ -36,11 +36,6 @@ public final class AccessibilityHelper {
                 return;
             }
 
-            if (!ReadOnly.allowWrite()) {
-                hub.setSource("a11y", "read-only（未自动开启；需手动在设置里开）");
-                return;
-            }
-
             String merged = (current == null || current.isEmpty())
                     ? self
                     : current + ":" + self;

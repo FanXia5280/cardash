@@ -42,10 +42,6 @@ public final class NotificationHelper {
                 next = cur + ":" + flat;
             }
 
-            if (!ReadOnly.allowWrite()) {
-                hub.setSource("notify", "read-only（未自动开启；需手动在设置里开）");
-                return;
-            }
             Settings.Secure.putString(ctx.getContentResolver(), KEY, next);
             hub.setSource("notify", "auto-enabled");
             Diagnostics.log("通知使用权已自动写入");
