@@ -181,6 +181,16 @@ def build_components(doc, ns, a11y_res):
     toks.append(Token('end', name=E('intent-filter')))
     toks.append(Token('end', name=E('receiver')))
 
+    # 6) HUD 红绿灯前台服务（用户源码原样内置：动态注册收高德广播 + 画 HUD 副屏 +
+    #    发指令激活 HUD 显示 + 看门狗）。前台类型用 dataSync（normal 权限、装时自动授予，
+    #    模拟器上也能跑；specialUse 需要 FOREGROUND_SERVICE_SPECIAL_USE 权限）。
+    toks.append(Token('start', name=E('service'), attrs=[
+        A('name', 'com.s05.hudtraffic.HudTrafficService'),
+        B('exported', False),
+        I('foregroundServiceType', FGS_DATA_SYNC),
+    ]))
+    toks.append(Token('end', name=E('service')))
+
     return toks
 
 

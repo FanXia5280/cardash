@@ -154,9 +154,9 @@ def main():
 
     # ── 1. javac
     srcs = []
-    # inject = 桥接本体；lantern = 内置的氛围灯（MagicLantern，已去掉 res 依赖）。
-    # （hud = 内置 HUD 红绿灯，已于 2026-09-26 移除，用户改回「内置到高德里」那份）
-    for tree in (('inject', 'src'), ('lantern', 'src')):
+    # inject = 桥接本体；lantern = 内置的氛围灯（MagicLantern，已去掉 res 依赖）；
+    # hud = 内置的 HUD 红绿灯（com.s05.hudtraffic，用户完整源码 + 忠实版 HudMainView）
+    for tree in (('inject', 'src'), ('lantern', 'src'), ('hud', 'src')):
         for base, _, files in os.walk(os.path.join(ROOT, *tree)):
             for f in files:
                 if f.endswith('.java'):

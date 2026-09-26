@@ -54,8 +54,13 @@ public class BootProvider extends ContentProvider {
             Diagnostics.log("氛围灯初始化失败: " + t);
         }
 
-        // （HUD 红绿灯入口已于 2026-09-26 移除：用户改用「内置到高德里」那份，
-        //   桌面设置里只保留「氛围灯设置」）
+        // HUD 红绿灯：同样跟随桌面进程保活 + 在「桌面设置」氛围灯下面挂入口。
+        // 整段包在 try 里 —— HUD 出任何问题都不允许影响原车功能。
+        try {
+            HudEntry.install(ctx);
+        } catch (Throwable t) {
+            Diagnostics.log("HUD 红绿灯初始化失败: " + t);
+        }
 
         return true;
     }
